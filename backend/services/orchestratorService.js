@@ -21,7 +21,6 @@ class OrchestratorService {
     const {
       callDepth = 0,
       parentInteractionId = null,
-      txHash = null,
       callChainId = uuidv4(),
     } = options
 
@@ -36,7 +35,14 @@ class OrchestratorService {
 
     const agent = await this._loadAgent(agentId)
 
-    const paymentResult = await this._verifyPayment(txHash, agent.pricing)
+    const hasAccess = await contractManager.hasAccess(
+      agent.contractAgentId,
+      callerWallet
+    )
+
+    if (!hasAccess) {
+      throw this._err('Access not purchased for this agent', 403)
+    }
 
     if (agent.status === 'active') {
       prisma.agent.update({
@@ -49,7 +55,6 @@ class OrchestratorService {
       agentId: agent.id,
       callerWallet,
       task,
-      txHash,
       callDepth,
       parentInteractionId,
     })
@@ -93,22 +98,10 @@ class OrchestratorService {
       latency,
     })
 
-    const revenue = paymentResult.verified
-      ? agent.pricing * (1 - config.platform.feePercent / 100)
-      : 0
-
-    await agentService.recordExecution(agent.id, { success, latency, revenue })
-
-    if (txHash && paymentResult.verified) {
-      await this._logTransaction({
-        txHash,
-        agentId: agent.id,
-        callerWallet,
-        ownerWallet: agent.ownerWallet,
-        amount: agent.pricing,
-        type: callDepth > 0 ? 'agent_to_agent' : 'call',
-      })
-    }
+    await agentService.recordExecution(agent.id, {
+      success,
+      latency,
+    })
 
     prisma.agent.update({
       where: { id: agent.id },
@@ -130,7 +123,6 @@ class OrchestratorService {
       success: true,
       callDepth,
       callChainId,
-      paymentVerified: paymentResult.verified,
       timestamp: new Date().toISOString(),
     }
   }
@@ -141,14 +133,13 @@ class OrchestratorService {
     let context = ''
 
     for (let i = 0; i < agentJobs.length; i++) {
-      const { agentId, task, txHash } = agentJobs[i]
+      const { agentId, task } = agentJobs[i]
 
       const enrichedTask = context
         ? `${task}\n\n---\nContext from previous agent:\n${context}`
         : task
 
       const result = await this.executeAgent(agentId, enrichedTask, callerWallet, {
-        txHash,
         callChainId,
         callDepth: i,
         parentInteractionId: results[i - 1]?.interactionId || null,
@@ -171,7 +162,6 @@ class OrchestratorService {
 
     const promises = agentJobs.map((job, i) =>
       this.executeAgent(job.agentId, job.task, callerWallet, {
-        txHash: job.txHash,
         callChainId,
         callDepth: i,
       })
@@ -214,59 +204,7 @@ class OrchestratorService {
       where,
       orderBy: { createdAt: 'desc' },
       take: Math.min(limit, 200),
-      select: {
-        id: true,
-        callerWallet: true,
-        task: true,
-        latency: true,
-        status: true,
-        callDepth: true,
-        parentInteractionId: true,
-        errorMessage: true,
-        createdAt: true,
-      },
     })
-  }
-
-  async getCallChain(interactionId) {
-    const root = await prisma.interaction.findUnique({
-      where: { id: interactionId },
-      include: { agent: { select: { name: true, agentId: true } } },
-    })
-    if (!root) return null
-
-    const buildTree = async (id) => {
-      const node = await prisma.interaction.findUnique({
-        where: { id },
-        include: { agent: { select: { name: true, agentId: true } } },
-      })
-      if (!node) return null
-
-      const children = await prisma.interaction.findMany({
-        where: { parentInteractionId: id },
-        include: { agent: { select: { name: true, agentId: true } } },
-      })
-
-      return {
-        ...node,
-        children: await Promise.all(children.map(c => buildTree(c.id))),
-      }
-    }
-
-    return buildTree(interactionId)
-  }
-
-  getStats() {
-    return {
-      ...this.stats,
-      activeChainsCount: this.activeChains.size,
-      activeTimersCount: this.activeTimers.size,
-      successRate: this.stats.totalExecutions > 0
-        ? parseFloat(
-            (this.stats.successfulExecutions / this.stats.totalExecutions * 100).toFixed(2)
-          )
-        : 100,
-    }
   }
 
   async _loadAgent(agentId) {
@@ -279,42 +217,19 @@ class OrchestratorService {
     return agent
   }
 
-  async _verifyPayment(txHash, expectedAmountEth) {
-    if (!txHash) {
-      if (config.nodeEnv === 'production') {
-        throw this._err('Transaction hash required for execution in production', 402)
-      }
-      return { verified: true, mock: true, reason: 'No txHash in dev mode' }
-    }
-
-    const result = await contractManager.verifyPaymentTransaction(txHash, expectedAmountEth)
-
-    if (!result.verified) {
-      if (config.nodeEnv === 'production') {
-        throw this._err(`Payment verification failed: ${result.error}`, 402)
-      }
-      console.warn('[ORCHESTRATOR] Payment verification failed (dev bypass):', result.error)
-      return { verified: true, mock: true, reason: result.error }
-    }
-
-    return result
-  }
-
-  async _createInteractionRecord({ agentId, callerWallet, task, txHash, callDepth, parentInteractionId }) {
+  async _createInteractionRecord({ agentId, callerWallet, task, callDepth, parentInteractionId }) {
     try {
       return await prisma.interaction.create({
         data: {
           agentId,
           callerWallet: callerWallet?.toLowerCase() || null,
           task: task?.slice(0, 10000) || null,
-          txHash: txHash || null,
           callDepth,
           parentInteractionId,
           status: 'success',
         },
       })
-    } catch (err) {
-      console.error('[ORCHESTRATOR] Failed to create interaction record:', err.message)
+    } catch {
       return null
     }
   }
@@ -324,16 +239,9 @@ class OrchestratorService {
     try {
       await prisma.interaction.update({
         where: { id: interactionId },
-        data: {
-          ...updates,
-          response: updates.response
-            ? updates.response.slice(0, 50000)
-            : undefined,
-        },
+        data: updates,
       })
-    } catch (err) {
-      console.error('[ORCHESTRATOR] Failed to finalize interaction:', err.message)
-    }
+    } catch {}
   }
 
   async _callWithTimeout(endpoint, task, meta = {}) {
@@ -348,90 +256,23 @@ class OrchestratorService {
 
     const payload = {
       task,
-      meta: {
-        platform: 'neural-market',
-        version: '1.0',
-        callDepth: meta.callDepth,
-        callChainId: meta.callChainId,
-        timestamp: new Date().toISOString(),
-      },
+      meta,
     }
 
-    const endpoints = [
-      `${endpoint}/execute`,
-      `${endpoint}/run`,
-      endpoint,
-    ]
-
-    let lastError
-    for (const url of endpoints) {
-      try {
-        const res = await axios.post(url, payload, {
-          timeout,
-          signal: controller.signal,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Neural-Market': '1',
-            'X-Call-Chain': meta.callChainId || '',
-          },
-          validateStatus: (s) => s < 500,
-        })
-
-        clearTimeout(timerId)
-        if (interactionId) this.activeTimers.delete(interactionId)
-
-        if (res.status >= 400) {
-          throw new Error(`Agent responded with HTTP ${res.status}: ${JSON.stringify(res.data)}`)
-        }
-
-        return res.data
-      } catch (err) {
-        if (axios.isCancel(err) || err.code === 'ERR_CANCELED') {
-          clearTimeout(timerId)
-          if (interactionId) this.activeTimers.delete(interactionId)
-          throw new Error(`Execution timed out after ${timeout}ms`)
-        }
-        if (err.response?.status === 404) {
-          lastError = err
-          continue
-        }
-        clearTimeout(timerId)
-        if (interactionId) this.activeTimers.delete(interactionId)
-        throw err
-      }
-    }
-
-    clearTimeout(timerId)
-    if (interactionId) this.activeTimers.delete(interactionId)
-    throw lastError || new Error('All agent endpoints returned 404')
-  }
-
-  async _logTransaction({ txHash, agentId, callerWallet, ownerWallet, amount, type }) {
     try {
-      await prisma.user.upsert({
-        where: { walletAddress: callerWallet || 'anonymous' },
-        update: {},
-        create: { walletAddress: callerWallet || 'anonymous' },
+      const res = await axios.post(`${endpoint}/execute`, payload, {
+        timeout,
+        signal: controller.signal,
       })
 
-      await prisma.transaction.upsert({
-        where: { txHash },
-        update: {},
-        create: {
-          txHash,
-          agentId,
-          callerWallet: callerWallet || 'anonymous',
-          ownerWallet,
-          amount,
-          platformFee: amount * (config.platform.feePercent / 100),
-          type,
-          status: 'confirmed',
-        },
-      })
+      clearTimeout(timerId)
+      if (interactionId) this.activeTimers.delete(interactionId)
+
+      return res.data
     } catch (err) {
-      if (!err.message?.includes('Unique constraint')) {
-        console.error('[ORCHESTRATOR] Transaction log error:', err.message)
-      }
+      clearTimeout(timerId)
+      if (interactionId) this.activeTimers.delete(interactionId)
+      throw err
     }
   }
 
@@ -441,7 +282,7 @@ class OrchestratorService {
     }
     const chain = this.activeChains.get(callChainId)
     if (chain.has(agentId)) {
-      throw this._err(`Circular agent call detected: agent "${agentId}" already in this chain`, 400)
+      throw this._err(`Circular call detected`, 400)
     }
     chain.add(agentId)
   }
@@ -450,17 +291,13 @@ class OrchestratorService {
     const chain = this.activeChains.get(callChainId)
     if (chain) {
       chain.delete(agentId)
-      if (chain.size === 0) {
-        this.activeChains.delete(callChainId)
-      }
+      if (chain.size === 0) this.activeChains.delete(callChainId)
     }
   }
 
   _serializeResponse(response) {
-    if (typeof response === 'string') return response
-    if (response === null || response === undefined) return ''
     try {
-      return JSON.stringify(response)
+      return typeof response === 'string' ? response : JSON.stringify(response)
     } catch {
       return String(response)
     }
@@ -470,17 +307,6 @@ class OrchestratorService {
     const err = new Error(message)
     err.status = status
     return err
-  }
-
-  cancelExecution(interactionId) {
-    const timer = this.activeTimers.get(interactionId)
-    if (timer) {
-      timer.controller.abort()
-      clearTimeout(timer.timerId)
-      this.activeTimers.delete(interactionId)
-      return true
-    }
-    return false
   }
 }
 

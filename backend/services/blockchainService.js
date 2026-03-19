@@ -2,220 +2,327 @@ import { ethers } from 'ethers'
 import prisma from '../lib/prisma.js'
 import config from '../config/config.js'
 
-// Minimal ABIs
-const AGENT_REGISTRY_ABI = [
-  'function registerAgent(string agentId, address owner, string metadataUri, uint256 pricing) returns (uint256)',
-  'function getAgent(string agentId) view returns (address owner, string metadataUri, uint256 pricing, bool active)',
-  'function deactivateAgent(string agentId)',
-  'event AgentRegistered(string indexed agentId, address indexed owner, uint256 pricing)',
+// ─────────────────────────────────────────────
+// ABIs
+// ─────────────────────────────────────────────
+
+const AGENTRA_ABI = [
+  'function deployAgent(uint8 tier, uint256 monthlyPrice, string metadataURI)',
+  'function purchaseAccess(uint256 agentId, bool isLifetime)',
+  'function upvote(uint256 agentId)',
+  'function agents(uint256) view returns (uint256 id, address creator, uint8 tier, uint256 monthlyPrice, string metadataURI, uint256 upvotes)',
+  'function hasAccess(uint256 agentId, address user) view returns (bool)',
+
+  'event AgentDeployed(uint256 indexed agentId, address indexed creator, uint8 tier)',
+  'event AccessPurchased(uint256 indexed agentId, address indexed buyer, bool isLifetime)',
+  'event AgentUpvoted(uint256 indexed agentId, address indexed voter)'
 ]
 
-const PAYMENT_ABI = [
-  'function payForCall(string agentId) payable',
-  'function withdraw()',
-  'function getBalance(address owner) view returns (uint256)',
-  'event PaymentProcessed(string indexed agentId, address indexed caller, uint256 amount)',
+const ERC20_ABI = [
+  'function approve(address spender, uint256 amount) external returns (bool)',
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function balanceOf(address account) view returns (uint256)'
 ]
 
-const VOTING_ABI = [
-  'function vote(string agentId, bool upvote)',
-  'function getVotes(string agentId) view returns (uint256 upvotes, uint256 downvotes)',
-  'event Voted(string indexed agentId, address indexed voter, bool upvote)',
-]
+// ─────────────────────────────────────────────
+// SERVICE
+// ─────────────────────────────────────────────
 
 class BlockchainService {
   constructor() {
     this.provider = null
     this.wallet = null
-    this.contracts = {}
+    this.agentra = null
+    this.token = null
     this._initialized = false
+    this._mock = false
   }
 
   async initialize() {
     if (this._initialized) return
 
     if (!config.blockchain.rpcUrl) {
-      console.warn('[BLOCKCHAIN] No RPC URL configured — running in mock mode')
+      console.warn('[BLOCKCHAIN] Mock mode enabled')
+      this._mock = true
+      this._initialized = true
       return
     }
 
     try {
       this.provider = new ethers.JsonRpcProvider(config.blockchain.rpcUrl)
-      await this.provider.getNetwork()
 
       if (config.blockchain.privateKey) {
         this.wallet = new ethers.Wallet(config.blockchain.privateKey, this.provider)
       }
 
-      // Init contracts if addresses present
-      const { agentRegistry, payment, voting } = config.blockchain.contracts
+      const runner = this.wallet || this.provider
 
-      if (agentRegistry) {
-        this.contracts.agentRegistry = new ethers.Contract(
-          agentRegistry,
-          AGENT_REGISTRY_ABI,
-          this.wallet || this.provider
-        )
-      }
+      const { agentra, token } = config.blockchain.contracts
 
-      if (payment) {
-        this.contracts.payment = new ethers.Contract(
-          payment,
-          PAYMENT_ABI,
-          this.wallet || this.provider
-        )
-      }
-
-      if (voting) {
-        this.contracts.voting = new ethers.Contract(
-          voting,
-          VOTING_ABI,
-          this.wallet || this.provider
-        )
-      }
+      this.agentra = new ethers.Contract(agentra, AGENTRA_ABI, runner)
+      this.token = new ethers.Contract(token, ERC20_ABI, runner)
 
       this._initialized = true
-      console.log('[BLOCKCHAIN] ✅ Initialized — chainId:', (await this.provider.getNetwork()).chainId)
+      console.log('[BLOCKCHAIN] ✅ Initialized')
     } catch (err) {
       console.error('[BLOCKCHAIN] ❌ Init failed:', err.message)
+      this._mock = true
+      this._initialized = true
     }
   }
 
-  /**
-   * Verify a transaction exists and paid enough
-   */
-  async verifyTransaction(txHash, expectedAmount) {
-    if (!this.provider) {
-      console.warn('[BLOCKCHAIN] Mock mode — skipping tx verification')
-      return true
-    }
+  // ─────────────────────────────────────────────
+  // APPROVAL
+  // ─────────────────────────────────────────────
 
-    try {
-      const tx = await this.provider.getTransaction(txHash)
-      if (!tx) return false
+  async _ensureApproval(amountWei) {
+    if (this._mock) return
 
-      const receipt = await this.provider.getTransactionReceipt(txHash)
-      if (!receipt || receipt.status !== 1) return false
+    const owner = this.wallet.address
+    const spender = this.agentra.target
 
-      const paidEth = parseFloat(ethers.formatEther(tx.value))
-      return paidEth >= expectedAmount
-    } catch (err) {
-      console.error('[BLOCKCHAIN] verifyTransaction error:', err.message)
-      return false
+    const allowance = await this.token.allowance(owner, spender)
+
+    if (allowance < amountWei) {
+      const tx = await this.token.approve(spender, amountWei)
+      await tx.wait(1)
     }
   }
 
-  /**
-   * Register agent on-chain
-   */
-  async registerAgentOnChain(agentId, ownerWallet, metadataUri, pricingEth) {
-    if (!this.contracts.agentRegistry) {
-      return { success: false, reason: 'No contract configured', mock: true }
-    }
+  // ─────────────────────────────────────────────
+  // DEPLOY AGENT
+  // ─────────────────────────────────────────────
+
+  async deployAgent(tier, monthlyPriceWei, metadataURI) {
+    if (this._mock) return { success: true, txHash: `0xmock_${Date.now()}` }
 
     try {
-      const pricingWei = ethers.parseEther(pricingEth.toString())
-      const tx = await this.contracts.agentRegistry.registerAgent(
-        agentId,
-        ownerWallet,
-        metadataUri || '',
-        pricingWei
-      )
-      const receipt = await tx.wait()
+      const fee = this._getListingFee(tier)
+
+      await this._ensureApproval(fee)
+
+      const tx = await this.agentra.deployAgent(tier, monthlyPriceWei, metadataURI)
+      const receipt = await tx.wait(1)
+
       return { success: true, txHash: receipt.hash }
     } catch (err) {
-      console.error('[BLOCKCHAIN] registerAgentOnChain error:', err.message)
       return { success: false, error: err.message }
     }
   }
 
-  /**
-   * Get agent on-chain data
-   */
-  async getAgentOnChain(agentId) {
-    if (!this.contracts.agentRegistry) return null
+  // ─────────────────────────────────────────────
+  // PURCHASE ACCESS
+  // ─────────────────────────────────────────────
+
+  async purchaseAccess(agentId, isLifetime, monthlyPriceWei) {
+    if (this._mock) return { success: true, txHash: `0xmock_${Date.now()}` }
+
     try {
-      const data = await this.contracts.agentRegistry.getAgent(agentId)
+      const totalCost = isLifetime
+        ? BigInt(monthlyPriceWei) * 12n
+        : BigInt(monthlyPriceWei)
+
+      await this._ensureApproval(totalCost)
+
+      const tx = await this.agentra.purchaseAccess(agentId, isLifetime)
+      const receipt = await tx.wait(1)
+
+      return { success: true, txHash: receipt.hash }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  }
+
+  // ─────────────────────────────────────────────
+  // UPVOTE
+  // ─────────────────────────────────────────────
+
+  async upvote(agentId) {
+    if (this._mock) return { success: true, txHash: `0xmock_${Date.now()}` }
+
+    try {
+      const cost = BigInt(config.token.upvoteCostWei)
+
+      await this._ensureApproval(cost)
+
+      const tx = await this.agentra.upvote(agentId)
+      const receipt = await tx.wait(1)
+
+      return { success: true, txHash: receipt.hash }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  }
+
+  // ─────────────────────────────────────────────
+  // READ
+  // ─────────────────────────────────────────────
+
+  async getAgent(agentId) {
+    if (this._mock) return null
+
+    try {
+      const a = await this.agentra.agents(agentId)
+
       return {
-        owner: data.owner,
-        metadataUri: data.metadataUri,
-        pricing: parseFloat(ethers.formatEther(data.pricing)),
-        active: data.active,
+        id: Number(a.id),
+        creator: a.creator,
+        tier: Number(a.tier),
+        monthlyPrice: a.monthlyPrice.toString(),
+        metadataURI: a.metadataURI,
+        upvotes: Number(a.upvotes),
       }
     } catch {
       return null
     }
   }
 
-  /**
-   * Get ETH balance for wallet
-   */
-  async getBalance(walletAddress) {
-    if (!this.provider) return '0'
+  async hasAccess(agentId, user) {
+    if (this._mock) return true
+
     try {
-      const bal = await this.provider.getBalance(walletAddress)
-      return ethers.formatEther(bal)
+      return await this.agentra.hasAccess(agentId, user)
+    } catch {
+      return false
+    }
+  }
+
+  async getTokenBalance(walletAddress) {
+    if (this._mock) return '0'
+
+    try {
+      const bal = await this.token.balanceOf(walletAddress)
+      return bal.toString()
     } catch {
       return '0'
     }
   }
 
-  /**
-   * Get on-chain vote counts
-   */
-  async getVotes(agentId) {
-    if (!this.contracts.voting) return { upvotes: 0, downvotes: 0 }
-    try {
-      const votes = await this.contracts.voting.getVotes(agentId)
-      return {
-        upvotes: Number(votes.upvotes),
-        downvotes: Number(votes.downvotes),
-      }
-    } catch {
-      return { upvotes: 0, downvotes: 0 }
-    }
-  }
+  // ─────────────────────────────────────────────
+  // EVENTS
+  // ─────────────────────────────────────────────
 
-  /**
-   * Start listening to contract events
-   */
   startEventListeners() {
-    if (!this.contracts.payment) return
+    if (this._mock) return
 
-    this.contracts.payment.on('PaymentProcessed', async (agentId, caller, amount) => {
-      console.log(`[BLOCKCHAIN] Payment received — Agent: ${agentId}, Caller: ${caller}, Amount: ${ethers.formatEther(amount)} ETH`)
-      // Update revenue in DB
+    // Agent deployed
+    this.agentra.on('AgentDeployed', async (agentId, creator, tier, event) => {
       try {
-        const agent = await prisma.agent.findFirst({ where: { agentId } })
+        await prisma.agent.updateMany({
+          where: { contractAgentId: Number(agentId) },
+          data: { status: 'active' },
+        })
+      } catch (err) {
+        console.error('[EVENT] AgentDeployed error:', err.message)
+      }
+    })
+
+    // Access purchased
+    this.agentra.on('AccessPurchased', async (agentId, buyer, isLifetime, event) => {
+      try {
+        const expiresAt = isLifetime
+          ? new Date('9999-12-31')
+          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+
+        await prisma.agentAccess.upsert({
+          where: {
+            agentId_userWallet: {
+              agentId: String(agentId),
+              userWallet: buyer,
+            },
+          },
+          update: { expiresAt, isLifetime },
+          create: {
+            agentId: String(agentId),
+            userWallet: buyer,
+            expiresAt,
+            isLifetime,
+          },
+        })
+
+        const agent = await prisma.agent.findFirst({
+          where: { contractAgentId: Number(agentId) },
+        })
+
         if (agent) {
-          await prisma.agent.update({
-            where: { id: agent.id },
-            data: { revenue: { increment: parseFloat(ethers.formatEther(amount)) } },
+          await prisma.transaction.create({
+            data: {
+              txHash: event.log.transactionHash,
+              type: 'purchase_access',
+              status: 'confirmed',
+              agentId: agent.agentId,
+              callerWallet: buyer,
+              ownerWallet: agent.ownerWallet,
+              totalAmount: agent.pricing,
+            },
           })
         }
       } catch (err) {
-        console.error('[BLOCKCHAIN] Event handler error:', err.message)
+        console.error('[EVENT] AccessPurchased error:', err.message)
       }
     })
 
-    console.log('[BLOCKCHAIN] Event listeners started')
+    // Upvote
+    this.agentra.on('AgentUpvoted', async (agentId, voter, event) => {
+      try {
+        const agent = await prisma.agent.findFirst({
+          where: { contractAgentId: Number(agentId) },
+        })
+
+        if (agent) {
+          await prisma.agent.update({
+            where: { id: agent.id },
+            data: { upvotes: { increment: 1 } },
+          })
+
+          await prisma.transaction.create({
+            data: {
+              txHash: event.log.transactionHash,
+              type: 'upvote',
+              status: 'confirmed',
+              agentId: agent.agentId,
+              callerWallet: voter,
+              ownerWallet: agent.ownerWallet,
+              totalAmount: config.token.upvoteCostWei,
+            },
+          })
+        }
+      } catch (err) {
+        console.error('[EVENT] Upvote error:', err.message)
+      }
+    })
+
+    console.log('[BLOCKCHAIN] ✅ Event listeners started')
   }
 
-  /**
-   * Calculate platform revenue
-   */
+  // ─────────────────────────────────────────────
+  // INTERNAL
+  // ─────────────────────────────────────────────
+
+  _getListingFee(tier) {
+    if (tier === 0) return BigInt(config.token.listingFeesWei.standard)
+    if (tier === 1) return BigInt(config.token.listingFeesWei.professional)
+    if (tier === 2) return BigInt(config.token.listingFeesWei.enterprise)
+  }
+
+  // ─────────────────────────────────────────────
+  // ANALYTICS
+  // ─────────────────────────────────────────────
+
   async calculateRevenue(ownerWallet) {
-    const transactions = await prisma.transaction.findMany({
+    const txs = await prisma.transaction.findMany({
       where: { ownerWallet, status: 'confirmed' },
-      select: { amount: true, platformFee: true },
     })
-    const gross = transactions.reduce((s, t) => s + t.amount, 0)
-    const fees = transactions.reduce((s, t) => s + t.platformFee, 0)
+
+    let total = 0n
+
+    for (const tx of txs) {
+      total += BigInt(tx.totalAmount || '0')
+    }
+
     return {
-      gross: parseFloat(gross.toFixed(6)),
-      fees: parseFloat(fees.toFixed(6)),
-      net: parseFloat((gross - fees).toFixed(6)),
-      txCount: transactions.length,
+      totalWei: total.toString(),
+      txCount: txs.length,
     }
   }
 }

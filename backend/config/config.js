@@ -24,9 +24,18 @@ const config = {
     rpcUrl: process.env.BLOCKCHAIN_RPC_URL || '',
     privateKey: process.env.PRIVATE_KEY || '',
     contracts: {
-      agentRegistry: process.env.AGENT_REGISTRY_ADDRESS || '',
-      payment: process.env.PAYMENT_CONTRACT_ADDRESS || '',
-      voting: process.env.VOTING_CONTRACT_ADDRESS || '',
+      agentra: process.env.AGENTRA_CONTRACT_ADDRESS || '',
+      token: process.env.AGENT_TOKEN_ADDRESS || '',
+    },
+  },
+
+  token: {
+    decimals: 18,
+    upvoteCostWei: process.env.UPVOTE_COST_WEI || '1000000000000000000',
+    listingFeesWei: {
+      standard: process.env.LISTING_FEE_STANDARD || '50000000000000000000',
+      professional: process.env.LISTING_FEE_PRO || '150000000000000000000',
+      enterprise: process.env.LISTING_FEE_ENTERPRISE || '500000000000000000000',
     },
   },
 
@@ -37,7 +46,6 @@ const config = {
   },
 
   platform: {
-    feePercent: parseFloat(process.env.PLATFORM_FEE_PERCENT) || 5,
     maxCallDepth: parseInt(process.env.MAX_CALL_DEPTH) || 5,
     callTimeoutMs: parseInt(process.env.CALL_TIMEOUT_MS) || 30000,
     rateLimitWindow: 60 * 1000,

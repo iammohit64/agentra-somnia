@@ -1,6 +1,14 @@
 import rateLimit from 'express-rate-limit'
 import config from '../config/config.js'
 
+const getKey = (req) => {
+  return (
+    req.user?.walletAddress ||
+    req.headers['x-wallet-address'] ||
+    req.ip
+  )
+}
+
 const createLimiter = (windowMs, max, message) =>
   rateLimit({
     windowMs,
@@ -8,8 +16,7 @@ const createLimiter = (windowMs, max, message) =>
     message: { error: message },
     standardHeaders: true,
     legacyHeaders: false,
-    keyGenerator: (req) =>
-      req.headers['x-wallet-address'] || req.ip,
+    keyGenerator: getKey,
   })
 
 const apiLimiter = createLimiter(
@@ -21,13 +28,13 @@ const apiLimiter = createLimiter(
 const executionLimiter = createLimiter(
   config.platform.rateLimitWindow,
   config.platform.executionRateLimitMax,
-  'Execution rate limit exceeded. Max 20 calls/minute.'
+  'Execution rate limit exceeded.'
 )
 
 const deployLimiter = createLimiter(
   60 * 60 * 1000,
   config.platform.deployRateLimitMax,
-  'Deploy rate limit exceeded. Max 10 deploys/hour.'
+  'Deploy rate limit exceeded.'
 )
 
 const authLimiter = createLimiter(

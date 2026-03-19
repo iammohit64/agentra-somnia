@@ -14,7 +14,6 @@ const getDashboard = asyncHandler(async (req, res) => {
   res.json(data)
 })
 
-// Completely dynamic: computes true totals from DB on the fly
 const getGlobalStats = asyncHandler(async (req, res) => {
   const [
     totalAgents,
@@ -27,7 +26,7 @@ const getGlobalStats = asyncHandler(async (req, res) => {
     prisma.agent.count({ where: { status: 'active' } }),
     prisma.interaction.count(),
     prisma.transaction.aggregate({
-      _sum: { amount: true },
+      _sum: { totalAmount: true },
       where: { status: 'confirmed' }
     }),
     prisma.agent.aggregate({
@@ -39,7 +38,7 @@ const getGlobalStats = asyncHandler(async (req, res) => {
     totalAgents,
     activeAgents,
     totalCalls: interactionsCount,
-    totalRevenue: transactions._sum.amount || 0,
+    totalRevenue: transactions._sum.totalAmount || '0',
     avgSuccessRate: avgMetrics._avg.successRate || 100
   })
 })

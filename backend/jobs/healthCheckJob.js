@@ -6,7 +6,13 @@ import config from '../config/config.js'
 const checkAgentHealth = async () => {
   const agents = await prisma.agent.findMany({
     where: { status: { in: ['active', 'busy', 'offline'] } },
-    select: { id: true, name: true, endpoint: true, status: true },
+    select: {
+      id: true,
+      name: true,
+      endpoint: true,
+      status: true,
+      contractAgentId: true,
+    },
   })
 
   let checked = 0
@@ -44,8 +50,10 @@ const checkAgentHealth = async () => {
           data: { status: 'offline' },
         })
         failed++
+        console.warn(`[HEALTH] ❌ Agent unreachable: ${agent.name}`)
       }
     }
+
     checked++
   }
 

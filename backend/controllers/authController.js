@@ -2,9 +2,11 @@ import { ethers } from 'ethers'
 import prisma from '../lib/prisma.js'
 import { asyncHandler } from '../middlewares/errorHandler.js'
 
+const generateNonce = () =>
+  Math.random().toString(36).substring(2) + Date.now().toString(36)
+
 /**
  * GET /auth/nonce/:address
- * Returns a nonce for the wallet to sign
  */
 const getNonce = asyncHandler(async (req, res) => {
   const { address } = req.params
@@ -14,24 +16,27 @@ const getNonce = asyncHandler(async (req, res) => {
   }
 
   const normalized = address.toLowerCase()
-  const nonce = Math.random().toString(36).substring(2) + Date.now().toString(36)
+  const nonce = generateNonce()
 
-  const user = await prisma.user.upsert({
+  await prisma.user.upsert({
     where: { walletAddress: normalized },
     update: { nonce },
-    create: { walletAddress: normalized, nonce },
+    create: {
+      walletAddress: normalized,
+      nonce,
+      totalRevenue: '0',
+    },
   })
 
   res.json({
     nonce,
-    message: `Sign this nonce to authenticate with Neural Market: ${nonce}`,
+    message: `Sign this nonce to authenticate: ${nonce}`,
     walletAddress: normalized,
   })
 })
 
 /**
  * POST /auth/verify-wallet
- * Verifies a signed nonce — full SIWE-style auth
  */
 const verifyWallet = asyncHandler(async (req, res) => {
   const { address, signature, message } = req.body
@@ -46,7 +51,6 @@ const verifyWallet = asyncHandler(async (req, res) => {
 
   const normalized = address.toLowerCase()
 
-  // Recover signer
   let recoveredAddress
   try {
     recoveredAddress = ethers.verifyMessage(message, signature).toLowerCase()
@@ -55,24 +59,29 @@ const verifyWallet = asyncHandler(async (req, res) => {
   }
 
   if (recoveredAddress !== normalized) {
-    return res.status(401).json({ error: 'Signature does not match address' })
+    return res.status(401).json({ error: 'Signature mismatch' })
   }
 
-  // Verify nonce matches
-  const user = await prisma.user.findUnique({ where: { walletAddress: normalized } })
+  const user = await prisma.user.findUnique({
+    where: { walletAddress: normalized },
+  })
+
   if (!user) {
-    return res.status(404).json({ error: 'User not found. Request a nonce first.' })
+    return res.status(404).json({ error: 'User not found' })
   }
 
   if (!message.includes(user.nonce)) {
-    return res.status(401).json({ error: 'Invalid nonce in message' })
+    return res.status(401).json({ error: 'Invalid nonce' })
   }
 
-  // Rotate nonce after use
-  const newNonce = Math.random().toString(36).substring(2)
+  const newNonce = generateNonce()
+
   await prisma.user.update({
     where: { walletAddress: normalized },
-    data: { nonce: newNonce, lastSeen: new Date() },
+    data: {
+      nonce: newNonce,
+      lastSeen: new Date(),
+    },
   })
 
   res.json({
@@ -84,19 +93,36 @@ const verifyWallet = asyncHandler(async (req, res) => {
 
 /**
  * GET /auth/profile
- * Returns user profile + owned agents
  */
 const getProfile = asyncHandler(async (req, res) => {
+  const wallet = req.walletAddress
+
   const user = await prisma.user.findUnique({
-    where: { walletAddress: req.walletAddress },
+    where: { walletAddress: wallet },
     include: {
       agents: {
         where: { status: { not: 'inactive' } },
         orderBy: { createdAt: 'desc' },
-        include: { metrics: true },
+        include: {
+          metrics: true,
+          accesses: true,
+        },
+      },
+      accesses: {
+        include: {
+          agent: true,
+        },
+      },
+      transactions: {
+        orderBy: { createdAt: 'desc' },
+        take: 20,
       },
       _count: {
-        select: { agents: true, votes: true, interactions: true },
+        select: {
+          agents: true,
+          transactions: true,
+          interactions: true,
+        },
       },
     },
   })

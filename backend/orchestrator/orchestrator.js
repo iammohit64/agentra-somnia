@@ -1,27 +1,22 @@
 import axios from 'axios'
 import prisma from '../lib/prisma.js'
 import agentService from '../services/agentService.js'
-import blockchainService from '../services/blockchainService.js'
+import contractManager from '../services/contractManager.js'
 import config from '../config/config.js'
 import { v4 as uuidv4 } from 'uuid'
 
 class Orchestrator {
   constructor() {
-    this.activeChains = new Map() // callChainId -> Set of agentIds
+    this.activeChains = new Map()
   }
 
-  /**
-   * Main execution entry point
-   */
   async executeAgent(agentId, task, callerWallet, options = {}) {
     const {
       callDepth = 0,
       parentInteractionId = null,
-      txHash = null,
       callChainId = uuidv4(),
     } = options
 
-    // ── 1. Loop / depth guard ──────────────────────────────
     if (callDepth > config.platform.maxCallDepth) {
       throw Object.assign(
         new Error(`Max call depth (${config.platform.maxCallDepth}) exceeded`),
@@ -29,47 +24,43 @@ class Orchestrator {
       )
     }
 
-    // Track call chain for loop detection
     if (!this.activeChains.has(callChainId)) {
       this.activeChains.set(callChainId, new Set())
     }
     const chain = this.activeChains.get(callChainId)
+
     if (chain.has(agentId)) {
       throw Object.assign(
-        new Error(`Circular agent call detected: ${agentId} already in chain`),
+        new Error(`Circular agent call detected: ${agentId}`),
         { status: 400 }
       )
     }
     chain.add(agentId)
 
-    // ── 2. Load agent ──────────────────────────────────────
     const agent = await agentService.getById(agentId)
+
     if (agent.status === 'offline' || agent.status === 'inactive') {
-      throw Object.assign(new Error(`Agent "${agent.name}" is ${agent.status}`), { status: 503 })
+      throw Object.assign(
+        new Error(`Agent "${agent.name}" is ${agent.status}`),
+        { status: 503 }
+      )
     }
 
-    // ── 3. Verify payment ──────────────────────────────────
-    let paymentVerified = false
-    let verifiedTxHash = txHash
-    if (txHash) {
-      try {
-        paymentVerified = await blockchainService.verifyTransaction(txHash, agent.pricing)
-        verifiedTxHash = txHash
-      } catch (err) {
-        console.warn('[ORCHESTRATOR] Payment verification failed (continuing in dev mode):', err.message)
-        if (config.nodeEnv === 'production') {
-          throw Object.assign(new Error('Payment verification failed'), { status: 402 })
-        }
-        paymentVerified = true // dev fallback
+    // ✅ VERIFY ACCESS (BLOCKCHAIN)
+    if (callerWallet) {
+      const hasAccess = await contractManager.hasAccess(
+        agent.contractAgentId,
+        callerWallet
+      )
+
+      if (!hasAccess) {
+        throw Object.assign(
+          new Error('Access not purchased for this agent'),
+          { status: 402 }
+        )
       }
-    } else {
-      if (config.nodeEnv === 'production') {
-        throw Object.assign(new Error('Transaction hash required for execution'), { status: 402 })
-      }
-      paymentVerified = true // dev fallback
     }
 
-    // ── 4. Create interaction record ───────────────────────
     const interactionId = uuidv4()
     const startTime = Date.now()
     let interactionRecord
@@ -77,32 +68,31 @@ class Orchestrator {
     try {
       interactionRecord = await prisma.interaction.create({
         data: {
-          agentId: agent.id,
+          agentId: agent.agentId,
           callerWallet: callerWallet?.toLowerCase() || null,
           task,
-          txHash: verifiedTxHash || null,
           callDepth,
           parentInteractionId,
           status: 'success',
         },
       })
     } catch (err) {
-      console.error('[ORCHESTRATOR] Failed to create interaction record:', err.message)
+      console.error('[ORCHESTRATOR] Interaction create failed:', err.message)
     }
 
-    // ── 5. Call agent endpoint ─────────────────────────────
     let response
     let success = false
+
     try {
       const result = await this._callAgentEndpoint(agent.endpoint, task, {
         callDepth,
         callChainId,
         interactionId: interactionRecord?.id,
       })
+
       response = result.data
       success = true
     } catch (err) {
-      // Update interaction as failed
       if (interactionRecord) {
         await prisma.interaction.update({
           where: { id: interactionRecord.id },
@@ -113,8 +103,10 @@ class Orchestrator {
           },
         })
       }
+
       chain.delete(agentId)
       if (chain.size === 0) this.activeChains.delete(callChainId)
+
       throw Object.assign(
         new Error(`Agent execution failed: ${err.message}`),
         { status: 502 }
@@ -123,45 +115,26 @@ class Orchestrator {
 
     const latency = Date.now() - startTime
 
-    // ── 6. Update interaction + metrics ───────────────────
-    const revenue = paymentVerified
-      ? agent.pricing * (1 - config.platform.feePercent / 100)
-      : 0
-
     if (interactionRecord) {
       await prisma.interaction.update({
         where: { id: interactionRecord.id },
         data: {
-          response: typeof response === 'string' ? response : JSON.stringify(response),
+          response:
+            typeof response === 'string'
+              ? response
+              : JSON.stringify(response),
           latency,
           status: 'success',
         },
       })
     }
 
-    await agentService.recordExecution(agent.id, { success, latency, revenue })
+    // ✅ OFF-CHAIN METRICS ONLY (NO TOKEN CALC HERE)
+    await agentService.recordExecution(agent.agentId, {
+      success,
+      latency,
+    })
 
-    // Log transaction
-    if (verifiedTxHash) {
-      try {
-        await prisma.transaction.create({
-          data: {
-            txHash: verifiedTxHash,
-            agentId: agent.id,
-            callerWallet: callerWallet?.toLowerCase() || 'anonymous',
-            ownerWallet: agent.ownerWallet,
-            amount: agent.pricing,
-            platformFee: agent.pricing * (config.platform.feePercent / 100),
-            type: callDepth > 0 ? 'agent_to_agent' : 'call',
-            status: 'confirmed',
-          },
-        })
-      } catch (err) {
-        console.warn('[ORCHESTRATOR] Transaction log failed (duplicate hash?):', err.message)
-      }
-    }
-
-    // ── 7. Cleanup chain tracker ───────────────────────────
     chain.delete(agentId)
     if (chain.size === 0) this.activeChains.delete(callChainId)
 
@@ -178,9 +151,6 @@ class Orchestrator {
     }
   }
 
-  /**
-   * Agent-to-agent call (used by agents internally)
-   */
   async agentToAgentCall(fromAgentId, toAgentId, task, parentOptions = {}) {
     return this.executeAgent(toAgentId, task, null, {
       ...parentOptions,
@@ -188,29 +158,24 @@ class Orchestrator {
     })
   }
 
-  /**
-   * Internal HTTP call to agent endpoint
-   */
   async _callAgentEndpoint(endpoint, task, meta = {}) {
     const timeout = config.platform.callTimeoutMs
 
     const payload = {
       task,
       meta: {
-        platform: 'neural-market',
-        version: '1.0',
+        platform: 'agentra',
+        version: '2.0',
         ...meta,
       },
     }
 
-    // Try MCP-style POST first
     try {
       return await axios.post(`${endpoint}/execute`, payload, {
         timeout,
         headers: { 'Content-Type': 'application/json' },
       })
     } catch (err) {
-      // If 404, try root endpoint
       if (err.response?.status === 404) {
         return await axios.post(endpoint, payload, {
           timeout,
@@ -221,9 +186,6 @@ class Orchestrator {
     }
   }
 
-  /**
-   * Get execution history for an agent
-   */
   async getInteractionHistory(agentId, limit = 50) {
     return prisma.interaction.findMany({
       where: { agentId },

@@ -8,6 +8,7 @@ import config from './config/config.js'
 import { errorHandler } from './middlewares/errorHandler.js'
 import { apiLimiter } from './middlewares/rateLimiter.js'
 import prisma from './lib/prisma.js'
+import contractManager from './lib/contractManager.js'
 
 // Routes
 import agentRoutes from './routes/agentRoutes.js'
@@ -28,7 +29,12 @@ app.use(
 app.use(
   cors({
     origin: config.isDev
-      ? ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5174']
+      ? [
+          'http://localhost:3000',
+          'http://localhost:5173',
+          'http://127.0.0.1:5173',
+          'http://localhost:5174',
+        ]
       : process.env.ALLOWED_ORIGINS?.split(',') || [],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -42,13 +48,15 @@ app.use(morgan(config.isDev ? 'dev' : 'combined'))
 app.use(apiLimiter)
 
 // ── Health check ───────────────────────────────────────────
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  const network = await contractManager.getNetworkInfo?.()
   res.json({
     status: 'ok',
     service: 'neural-market-api',
     version: '1.0.0',
     timestamp: new Date().toISOString(),
     env: config.nodeEnv,
+    blockchain: network || null,
   })
 })
 
@@ -71,13 +79,17 @@ app.use(errorHandler)
 // ── Start server ───────────────────────────────────────────
 const start = async () => {
   try {
-    // Note: Blockchain listeners removed. 
-    // State is now managed via frontend Draft -> Confirm flow.
+    await contractManager.init()
+
+    if (!contractManager.isMock) {
+      contractManager.startAllListeners(prisma)
+    }
 
     app.listen(config.port, () => {
       console.log(`\n🚀 Neural Market API running on port ${config.port}`)
       console.log(`   Environment  : ${config.nodeEnv}`)
       console.log(`   Database     : Prisma / MongoDB`)
+      console.log(`   Blockchain   : ${contractManager.isMock ? 'Mock Mode' : 'Connected'}`)
       console.log(`   Health       : http://localhost:${config.port}/health\n`)
     })
   } catch (err) {

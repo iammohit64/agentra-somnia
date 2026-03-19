@@ -6,60 +6,115 @@ export function useAgents(params = {}) {
   const { setAgents, setLoading, setError, agents, isLoading, error } = useAgentStore()
 
   useEffect(() => {
-    const fetch = async () => {
+    const fetchAgents = async () => {
       setLoading(true)
       try {
-        const { data } = await agentsAPI.getAll(params)
-        setAgents(data.agents || data)
+        const res = await agentsAPI.getAll(params)
+
+        // Backend now returns consistent structure
+        const agentsData = res?.data?.agents || []
+
+        setAgents(agentsData)
       } catch (err) {
-        setError(err.message)
-        // Load mock data if API fails
+        setError(err?.response?.data?.error || err.message)
+
+        // fallback mock (already converted to new schema shape)
         setAgents(MOCK_AGENTS)
       } finally {
         setLoading(false)
       }
     }
-    fetch()
-  }, [])
+
+    fetchAgents()
+  }, [JSON.stringify(params)])
 
   return { agents, isLoading, error }
 }
 
+// ✅ Updated mock data (aligned with new Prisma schema)
 export const MOCK_AGENTS = [
   {
-    _id: '1', name: 'DataSynth-7', category: 'Analysis', description: 'Advanced data synthesis and pattern recognition agent with neural processing capabilities.',
-    endpoint: 'https://api.datasynth.ai', pricing: 0.05, status: 'active', rating: 4.8,
-    tags: ['data', 'analysis', 'ml'], calls: 12847, successRate: 99.2, revenue: 642,
-    ownerWallet: '0xABCDEF1234567890', createdAt: '2024-01-15',
+    id: '1',
+    agentId: 'agent_1',
+    name: 'DataSynth-7',
+    description: 'Advanced data synthesis and pattern recognition agent.',
+    metadataUri: '',
+    endpoint: 'https://api.datasynth.ai',
+
+    ownerWallet: '0xABCDEF1234567890',
+
+    tier: 'Standard',
+    pricing: '50000000000000000', // wei (0.05 AGT equivalent)
+    upvotes: 12,
+
+    category: 'Analysis',
+    tags: ['data', 'analysis', 'ml'],
+    status: 'active',
+
+    rating: 4.8,
+    ratingCount: 120,
+
+    calls: 12847,
+    successRate: 99.2,
+
+    revenue: '642000000000000000000',
+
+    createdAt: new Date().toISOString(),
   },
   {
-    _id: '2', name: 'CodeForge-X', category: 'Development', description: 'Autonomous code generation, review and optimization agent. Supports 40+ languages.',
-    endpoint: 'https://api.codeforge.dev', pricing: 0.08, status: 'active', rating: 4.9,
-    tags: ['code', 'dev', 'automation'], calls: 28341, successRate: 97.8, revenue: 2267,
-    ownerWallet: '0xDEF0123456789ABC', createdAt: '2024-02-01',
+    id: '2',
+    agentId: 'agent_2',
+    name: 'CodeForge-X',
+    description: 'Autonomous code generation and optimization agent.',
+    metadataUri: '',
+    endpoint: 'https://api.codeforge.dev',
+
+    ownerWallet: '0xDEF0123456789ABC',
+
+    tier: 'Professional',
+    pricing: '80000000000000000',
+    upvotes: 30,
+
+    category: 'Development',
+    tags: ['code', 'dev', 'automation'],
+    status: 'active',
+
+    rating: 4.9,
+    ratingCount: 200,
+
+    calls: 28341,
+    successRate: 97.8,
+
+    revenue: '2267000000000000000000',
+
+    createdAt: new Date().toISOString(),
   },
   {
-    _id: '3', name: 'NeuralVault', category: 'Security', description: 'On-chain security analysis, smart contract auditing, and threat detection agent.',
-    endpoint: 'https://api.neuralvault.io', pricing: 0.12, status: 'active', rating: 4.7,
-    tags: ['security', 'audit', 'web3'], calls: 5621, successRate: 98.5, revenue: 675,
-    ownerWallet: '0x9876543210ABCDEF', createdAt: '2024-01-28',
-  },
-  {
-    _id: '4', name: 'OracleStream', category: 'Data', description: 'Real-time market data aggregation and prediction agent with cross-chain oracle integration.',
-    endpoint: 'https://api.oraclestream.net', pricing: 0.03, status: 'active', rating: 4.6,
-    tags: ['oracle', 'defi', 'data'], calls: 43201, successRate: 99.7, revenue: 1296,
-    ownerWallet: '0x1234567890ABCDEF', createdAt: '2024-03-05',
-  },
-  {
-    _id: '5', name: 'SynthLang-3', category: 'NLP', description: 'Multi-modal language synthesis, translation and summarization with context window of 1M tokens.',
-    endpoint: 'https://api.synthlang.ai', pricing: 0.04, status: 'active', rating: 4.5,
-    tags: ['nlp', 'translation', 'text'], calls: 19005, successRate: 96.3, revenue: 760,
-    ownerWallet: '0xFEDCBA9876543210', createdAt: '2024-02-20',
-  },
-  {
-    _id: '6', name: 'ChainMind', category: 'Web3', description: 'Autonomous DeFi strategy agent — yield optimization, liquidity management, risk assessment.',
-    endpoint: 'https://api.chainmind.finance', pricing: 0.15, status: 'busy', rating: 4.9,
-    tags: ['defi', 'yield', 'web3'], calls: 8902, successRate: 98.1, revenue: 1335,
-    ownerWallet: '0xA1B2C3D4E5F60718', createdAt: '2024-03-15',
+    id: '3',
+    agentId: 'agent_3',
+    name: 'NeuralVault',
+    description: 'Smart contract auditing and threat detection agent.',
+    metadataUri: '',
+    endpoint: 'https://api.neuralvault.io',
+
+    ownerWallet: '0x9876543210ABCDEF',
+
+    tier: 'Enterprise',
+    pricing: '120000000000000000',
+    upvotes: 18,
+
+    category: 'Security',
+    tags: ['security', 'audit', 'web3'],
+    status: 'active',
+
+    rating: 4.7,
+    ratingCount: 95,
+
+    calls: 5621,
+    successRate: 98.5,
+
+    revenue: '675000000000000000000',
+
+    createdAt: new Date().toISOString(),
   },
 ]

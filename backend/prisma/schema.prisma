@@ -7,12 +7,12 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ─────────────────────────────────────
+//////////////////////////////////////////////////
 // ENUMS
-// ─────────────────────────────────────
+//////////////////////////////////////////////////
 
 enum AgentStatus {
-  draft     // <--- ADDED FOR WEB3 DEPLOYMENT FLOW
+  draft
   active
   inactive
   busy
@@ -29,15 +29,17 @@ enum AgentCategory {
   Other
 }
 
-enum VoteType {
-  up
-  down
+enum AgentTier {
+  Standard
+  Professional
+  Enterprise
 }
 
 enum TransactionType {
-  call
   deploy
-  vote
+  purchase_access
+  upvote
+  call
   agent_to_agent
 }
 
@@ -53,58 +55,77 @@ enum InteractionStatus {
   timeout
 }
 
-// ─────────────────────────────────────
-// MODELS
-// ─────────────────────────────────────
+//////////////////////////////////////////////////
+// USER
+//////////////////////////////////////////////////
 
 model User {
-  id            String        @id @default(auto()) @map("_id") @db.ObjectId
-  walletAddress String        @unique
-  nonce         String        @default(cuid())
-  totalRevenue  Float         @default(0)
-  createdAt     DateTime      @default(now())
-  lastSeen      DateTime      @default(now())
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  walletAddress String   @unique
+  nonce         String   @default(cuid())
+
+  totalRevenue  String   @default("0") // in wei
+
+  createdAt     DateTime @default(now())
+  lastSeen      DateTime @default(now())
 
   agents        Agent[]
-  votes         Vote[]
   transactions  Transaction[]
   interactions  Interaction[]
+  accesses      AgentAccess[]
+
+  @@index([walletAddress])
 }
+
+//////////////////////////////////////////////////
+// AGENT
+//////////////////////////////////////////////////
 
 model Agent {
   id              String        @id @default(auto()) @map("_id") @db.ObjectId
   agentId         String        @unique @default(cuid())
-  name            String        @unique
-  ownerWallet     String
-  description     String?
-  endpoint        String
-  metadataUri     String?
-  
-  // --- ADDED FOR WEB3 ---
-  deployMode      String        @default("blockchain") 
-  contractAgentId Int?          // The uint256 ID from the smart contract
-  txHash          String?       // The transaction hash of the deployment
-  // ----------------------
 
+  // On-chain mapping
+  contractAgentId Int?          // uint256 ID from contract
+  txHash          String?       // deployment tx
+
+  name            String        @unique
+  description     String?
+  metadataUri     String?
+
+  ownerWallet     String
+  owner           User          @relation(fields: [ownerWallet], references: [walletAddress])
+
+  endpoint        String
+
+  // Web3 fields
+  tier            AgentTier
+  pricing         String        // monthly price in wei
+  upvotes         Int           @default(0)
+
+  // Off-chain enhancements
   category        AgentCategory @default(Data)
   tags            String[]
-  pricing         Float
   status          AgentStatus   @default(active)
+
   rating          Float         @default(0)
   ratingCount     Int           @default(0)
+
   calls           Int           @default(0)
   successRate     Float         @default(100)
-  revenue         Float         @default(0)
+
+  revenue         String        @default("0") // wei earned
   score           Float         @default(0)
+
   mcpSchema       Json?
   isVerified      Boolean       @default(false)
+
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  owner           User          @relation(fields: [ownerWallet], references: [walletAddress])
-  votes           Vote[]
-  interactions    Interaction[]
+  accesses        AgentAccess[]
   transactions    Transaction[]
+  interactions    Interaction[]
   metrics         UsageMetrics?
 
   @@index([ownerWallet])
@@ -112,81 +133,142 @@ model Agent {
   @@index([category])
 }
 
-model Vote {
+//////////////////////////////////////////////////
+// ACCESS CONTROL (SUBSCRIPTIONS)
+//////////////////////////////////////////////////
+
+model AgentAccess {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
+
   agentId     String
-  voterWallet String
-  vote        VoteType
-  weight      Int      @default(1)
-  createdAt   DateTime @default(now())
+  userWallet  String
+
+  expiresAt   DateTime
+  isLifetime  Boolean  @default(false)
 
   agent       Agent    @relation(fields: [agentId], references: [agentId])
-  voter       User     @relation(fields: [voterWallet], references: [walletAddress])
+  user        User     @relation(fields: [userWallet], references: [walletAddress])
 
-  @@unique([agentId, voterWallet])
+  createdAt   DateTime @default(now())
+
+  @@unique([agentId, userWallet])
   @@index([agentId])
+  @@index([userWallet])
 }
 
-model Transaction {
-  id           String            @id @default(auto()) @map("_id") @db.ObjectId
-  txHash       String            @unique
-  agentId      String
-  callerWallet String
-  ownerWallet  String
-  amount       Float
-  platformFee  Float             @default(0)
-  type         TransactionType
-  status       TransactionStatus @default(pending)
-  createdAt    DateTime          @default(now())
+//////////////////////////////////////////////////
+// TRANSACTIONS (ALL TOKEN FLOWS)
+//////////////////////////////////////////////////
 
-  agent        Agent             @relation(fields: [agentId], references: [agentId])
-  caller       User              @relation(fields: [callerWallet], references: [walletAddress])
+model Transaction {
+  id            String            @id @default(auto()) @map("_id") @db.ObjectId
+
+  txHash        String            @unique
+
+  type          TransactionType
+  status        TransactionStatus @default(pending)
+
+  agentId       String?
+  agent         Agent?            @relation(fields: [agentId], references: [agentId])
+
+  callerWallet  String
+  caller        User              @relation(fields: [callerWallet], references: [walletAddress])
+
+  ownerWallet   String?           // agent creator
+
+  // TOKEN VALUES (ALL IN WEI STRING)
+  totalAmount   String
+  platformFee   String?
+  creatorAmount String?
+
+  createdAt     DateTime          @default(now())
 
   @@index([agentId])
   @@index([callerWallet])
   @@index([ownerWallet])
+  @@index([type])
 }
+
+//////////////////////////////////////////////////
+// INTERACTIONS (NO TOKEN COST)
+//////////////////////////////////////////////////
 
 model Interaction {
   id                  String            @id @default(auto()) @map("_id") @db.ObjectId
+
   agentId             String
+  agent               Agent             @relation(fields: [agentId], references: [agentId])
+
   callerWallet        String?
+  caller              User?             @relation(fields: [callerWallet], references: [walletAddress])
+
   task                String?
   response            String?
+
   latency             Int?
   status              InteractionStatus @default(success)
-  txHash              String?
+
   parentInteractionId String?
   callDepth           Int               @default(0)
-  errorMessage        String?
-  createdAt           DateTime          @default(now())
 
-  agent               Agent             @relation(fields: [agentId], references: [agentId])
-  caller              User?             @relation(fields: [callerWallet], references: [walletAddress])
+  errorMessage        String?
+
+  createdAt           DateTime          @default(now())
 
   @@index([agentId])
   @@index([callerWallet])
   @@index([agentId, createdAt])
 }
 
+//////////////////////////////////////////////////
+// USAGE METRICS
+//////////////////////////////////////////////////
+
 model UsageMetrics {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
+
   agentId     String   @unique
+  agent       Agent    @relation(fields: [agentId], references: [agentId])
+
   calls       Int      @default(0)
   successRate Float    @default(100)
-  revenue     Float    @default(0)
-  avgLatency  Float    @default(0)
-  dailyCalls  Json     @default("{}")
-  updatedAt   DateTime @updatedAt
 
-  agent       Agent    @relation(fields: [agentId], references: [agentId])
+  revenue     String   @default("0") // wei
+  avgLatency  Float    @default(0)
+
+  dailyCalls  Json     @default("{}")
+
+  updatedAt   DateTime @updatedAt
 }
 
+//////////////////////////////////////////////////
+// PLATFORM CONFIG (OPTIONAL BUT IMPORTANT)
+//////////////////////////////////////////////////
+
+model PlatformConfig {
+  id               String @id @default("config")
+
+  feeCollector     String
+
+  standardFee      String
+  professionalFee  String
+  enterpriseFee    String
+
+  updatedAt        DateTime @updatedAt
+}
+
+//////////////////////////////////////////////////
+// GLOBAL STATS
+//////////////////////////////////////////////////
+
 model GlobalStats {
-  id           String   @id @map("_id") @default("global")
+  id           String   @id @default("global")
+
   totalAgents  Int      @default(0)
   activeAgents Int      @default(0)
+
   totalCalls   Int      @default(0)
-  totalRevenue Float    @default(0)
+  totalRevenue String   @default("0") // wei
+
   updatedAt    DateTime @updatedAt
 }

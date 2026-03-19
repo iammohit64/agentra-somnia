@@ -8,7 +8,7 @@ import {
   getAgentRank,
   getLeaderboardStats,
 } from '../controllers/leaderboardController.js'
-import { authMiddleware, optionalAuth } from '../middlewares/auth.js'
+import { authMiddleware } from '../middlewares/auth.js'
 
 const router = Router()
 
@@ -18,7 +18,7 @@ router.get('/leaderboard/stats', getLeaderboardStats)
 router.get('/leaderboard/top/:n', getTopAgents)
 router.get('/leaderboard/category/:category', getLeaderboardByCategory)
 router.get('/leaderboard/agent/:id/rank', getAgentRank)
-router.post('/leaderboard/recalculate', recalculateScores)
+router.post('/leaderboard/recalculate', authMiddleware, recalculateScores)
 
 // ── Analytics ──────────────────────────────────────────────
 router.get('/analytics/global', getGlobalStats)

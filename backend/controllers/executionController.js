@@ -1,42 +1,49 @@
 import orchestrator from '../orchestrator/orchestrator.js'
 import prisma from '../lib/prisma.js'
-import { asyncHandler, createError } from '../middlewares/errorHandler.js'
+import contractManager from '../lib/contractManager.js'
+import config from '../config/config.js'
+import { asyncHandler } from '../middlewares/errorHandler.js'
 import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
 
 const executeSchema = z.object({
   task: z.string().min(1).max(10000),
-  txHash: z.string().optional(),
 })
 
 const composeSchema = z.object({
   agents: z.array(z.object({
     agentId: z.string(),
     task: z.string().min(1),
-    txHash: z.string().optional(),
   })).min(2).max(5),
   sequential: z.boolean().optional(),
-})
-
-const voteSchema = z.object({
-  vote: z.enum(['up', 'down']),
 })
 
 /**
  * POST /agents/:id/execute
  */
 const executeAgent = asyncHandler(async (req, res) => {
-  const { task, txHash } = executeSchema.parse(req.body)
+  const { task } = executeSchema.parse(req.body)
   const { id } = req.params
   const callerWallet = req.walletAddress
 
-  const result = await orchestrator.executeAgent(id, task, callerWallet, { txHash })
+  const agent = await prisma.agent.findFirst({
+    where: { OR: [{ id }, { agentId: id }] },
+  })
+
+  if (!agent) return res.status(404).json({ error: 'Agent not found' })
+
+  const hasAccess = await contractManager.hasAccess(agent.contractAgentId, callerWallet)
+  if (!hasAccess) {
+    return res.status(403).json({ error: 'Access not purchased' })
+  }
+
+  const result = await orchestrator.executeAgent(agent.agentId, task, callerWallet)
+
   res.json(result)
 })
 
 /**
  * POST /agents/compose
- * Execute multiple agents in sequence or parallel
  */
 const composeAgents = asyncHandler(async (req, res) => {
   const { agents, sequential = false } = composeSchema.parse(req.body)
@@ -44,32 +51,54 @@ const composeAgents = asyncHandler(async (req, res) => {
   const callChainId = uuidv4()
 
   let results
+
   if (sequential) {
-    // Sequential: output of each becomes input context for next
     results = []
     let context = ''
-    for (const [i, agent] of agents.entries()) {
-      const task = context ? `${agent.task}\n\nContext from previous agent:\n${context}` : agent.task
+
+    for (const [i, agentInput] of agents.entries()) {
+      const agent = await prisma.agent.findFirst({
+        where: { agentId: agentInput.agentId },
+      })
+
+      if (!agent) continue
+
+      const hasAccess = await contractManager.hasAccess(agent.contractAgentId, callerWallet)
+      if (!hasAccess) continue
+
+      const task = context
+        ? `${agentInput.task}\n\nContext:\n${context}`
+        : agentInput.task
+
       const result = await orchestrator.executeAgent(agent.agentId, task, callerWallet, {
-        txHash: agent.txHash,
         callChainId,
         callDepth: i,
       })
+
       results.push(result)
-      context = typeof result.response === 'string'
-        ? result.response
-        : JSON.stringify(result.response)
+
+      context =
+        typeof result.response === 'string'
+          ? result.response
+          : JSON.stringify(result.response)
     }
   } else {
-    // Parallel
     results = await Promise.all(
-      agents.map((agent, i) =>
-        orchestrator.executeAgent(agent.agentId, agent.task, callerWallet, {
-          txHash: agent.txHash,
+      agents.map(async (agentInput, i) => {
+        const agent = await prisma.agent.findFirst({
+          where: { agentId: agentInput.agentId },
+        })
+
+        if (!agent) return null
+
+        const hasAccess = await contractManager.hasAccess(agent.contractAgentId, callerWallet)
+        if (!hasAccess) return null
+
+        return orchestrator.executeAgent(agent.agentId, agentInput.task, callerWallet, {
           callChainId,
           callDepth: i,
         })
-      )
+      })
     )
   }
 
@@ -82,67 +111,94 @@ const composeAgents = asyncHandler(async (req, res) => {
 })
 
 /**
- * POST /agents/:id/vote
+ * POST /agents/:id/purchase
  */
-const voteOnAgent = asyncHandler(async (req, res) => {
-  const { vote } = voteSchema.parse(req.body)
+const purchaseAccess = asyncHandler(async (req, res) => {
+  const { isLifetime } = req.body
+  const { id } = req.params
+  const callerWallet = req.walletAddress
+
+  const agent = await prisma.agent.findFirst({
+    where: { OR: [{ id }, { agentId: id }] },
+  })
+
+  if (!agent) return res.status(404).json({ error: 'Agent not found' })
+
+  const tx = await contractManager.purchaseAccess(
+    agent.contractAgentId,
+    isLifetime,
+    agent.pricing
+  )
+
+  if (!tx.success) {
+    return res.status(400).json({ error: tx.error })
+  }
+
+  const totalCost = isLifetime
+    ? (BigInt(agent.pricing) * 12n).toString()
+    : agent.pricing
+
+  const platformFee = (BigInt(totalCost) * 20n / 100n).toString()
+  const creatorAmount = (BigInt(totalCost) - BigInt(platformFee)).toString()
+
+  await prisma.transaction.create({
+    data: {
+      txHash: tx.txHash,
+      type: 'purchase_access',
+      status: 'confirmed',
+      agentId: agent.agentId,
+      callerWallet,
+      ownerWallet: agent.ownerWallet,
+      totalAmount: totalCost,
+      platformFee,
+      creatorAmount,
+    },
+  })
+
+  res.json({ success: true, txHash: tx.txHash })
+})
+
+/**
+ * POST /agents/:id/upvote
+ */
+const upvoteAgent = asyncHandler(async (req, res) => {
   const { id } = req.params
   const voterWallet = req.walletAddress
 
-  // Find agent
-  const isObjectId = /^[a-f\d]{24}$/i.test(id)
-const agent = await prisma.agent.findFirst({
-  where: isObjectId
-    ? { OR: [{ id }, { agentId: id }] }
-    : { agentId: id },
-})
+  const agent = await prisma.agent.findFirst({
+    where: { OR: [{ id }, { agentId: id }] },
+  })
+
   if (!agent) return res.status(404).json({ error: 'Agent not found' })
 
-  // Cannot vote on your own agent
   if (agent.ownerWallet === voterWallet) {
-    return res.status(400).json({ error: 'Cannot vote on your own agent' })
+    return res.status(400).json({ error: 'Cannot upvote your own agent' })
   }
 
-  // Upsert vote (change vote allowed)
-  const existingVote = await prisma.vote.findUnique({
-    where: { agentId_voterWallet: { agentId: agent.id, voterWallet } },
-  })
+  const tx = await contractManager.upvote(
+    agent.contractAgentId,
+    config.token.upvoteCostWei
+  )
 
-  let voteRecord
-  if (existingVote) {
-    voteRecord = await prisma.vote.update({
-      where: { id: existingVote.id },
-      data: { vote },
-    })
-  } else {
-    voteRecord = await prisma.vote.create({
-      data: { agentId: agent.id, voterWallet, vote },
-    })
+  if (!tx.success) {
+    return res.status(400).json({ error: tx.error })
   }
 
-  // Get updated vote counts
-  const [upvotes, downvotes] = await prisma.$transaction([
-    prisma.vote.count({ where: { agentId: agent.id, vote: 'up' } }),
-    prisma.vote.count({ where: { agentId: agent.id, vote: 'down' } }),
-  ])
-
-  // Recalculate rating
-  const totalVotes = upvotes + downvotes
-  const newRating = totalVotes > 0
-    ? parseFloat((1 + (upvotes / totalVotes) * 4).toFixed(2))
-    : agent.rating
-
-  await prisma.agent.update({
-    where: { id: agent.id },
-    data: { rating: newRating, ratingCount: totalVotes },
+  await prisma.transaction.create({
+    data: {
+      txHash: tx.txHash,
+      type: 'upvote',
+      status: 'confirmed',
+      agentId: agent.agentId,
+      callerWallet: voterWallet,
+      ownerWallet: agent.ownerWallet,
+      totalAmount: config.token.upvoteCostWei,
+      creatorAmount: config.token.upvoteCostWei,
+      platformFee: '0',
+    },
   })
 
-  res.json({
-    vote: voteRecord.vote,
-    upvotes,
-    downvotes,
-    rating: newRating,
-  })
+  res.json({ success: true, txHash: tx.txHash })
 })
 
 /**
@@ -151,8 +207,15 @@ const agent = await prisma.agent.findFirst({
 const getInteractions = asyncHandler(async (req, res) => {
   const { id } = req.params
   const limit = Math.min(parseInt(req.query.limit) || 50, 200)
+
   const history = await orchestrator.getInteractionHistory(id, limit)
   res.json(history)
 })
 
-export { executeAgent, composeAgents, voteOnAgent, getInteractions }
+export {
+  executeAgent,
+  composeAgents,
+  purchaseAccess,
+  upvoteAgent,
+  getInteractions
+}
