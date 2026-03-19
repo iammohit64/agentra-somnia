@@ -1,0 +1,192 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────
+
+enum AgentStatus {
+  draft     // <--- ADDED FOR WEB3 DEPLOYMENT FLOW
+  active
+  inactive
+  busy
+  offline
+}
+
+enum AgentCategory {
+  Analysis
+  Development
+  Security
+  Data
+  NLP
+  Web3
+  Other
+}
+
+enum VoteType {
+  up
+  down
+}
+
+enum TransactionType {
+  call
+  deploy
+  vote
+  agent_to_agent
+}
+
+enum TransactionStatus {
+  pending
+  confirmed
+  failed
+}
+
+enum InteractionStatus {
+  success
+  failed
+  timeout
+}
+
+// ─────────────────────────────────────
+// MODELS
+// ─────────────────────────────────────
+
+model User {
+  id            String        @id @default(auto()) @map("_id") @db.ObjectId
+  walletAddress String        @unique
+  nonce         String        @default(cuid())
+  totalRevenue  Float         @default(0)
+  createdAt     DateTime      @default(now())
+  lastSeen      DateTime      @default(now())
+
+  agents        Agent[]
+  votes         Vote[]
+  transactions  Transaction[]
+  interactions  Interaction[]
+}
+
+model Agent {
+  id              String        @id @default(auto()) @map("_id") @db.ObjectId
+  agentId         String        @unique @default(cuid())
+  name            String        @unique
+  ownerWallet     String
+  description     String?
+  endpoint        String
+  metadataUri     String?
+  
+  // --- ADDED FOR WEB3 ---
+  deployMode      String        @default("blockchain") 
+  contractAgentId Int?          // The uint256 ID from the smart contract
+  txHash          String?       // The transaction hash of the deployment
+  // ----------------------
+
+  category        AgentCategory @default(Data)
+  tags            String[]
+  pricing         Float
+  status          AgentStatus   @default(active)
+  rating          Float         @default(0)
+  ratingCount     Int           @default(0)
+  calls           Int           @default(0)
+  successRate     Float         @default(100)
+  revenue         Float         @default(0)
+  score           Float         @default(0)
+  mcpSchema       Json?
+  isVerified      Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  owner           User          @relation(fields: [ownerWallet], references: [walletAddress])
+  votes           Vote[]
+  interactions    Interaction[]
+  transactions    Transaction[]
+  metrics         UsageMetrics?
+
+  @@index([ownerWallet])
+  @@index([status])
+  @@index([category])
+}
+
+model Vote {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  agentId     String
+  voterWallet String
+  vote        VoteType
+  weight      Int      @default(1)
+  createdAt   DateTime @default(now())
+
+  agent       Agent    @relation(fields: [agentId], references: [agentId])
+  voter       User     @relation(fields: [voterWallet], references: [walletAddress])
+
+  @@unique([agentId, voterWallet])
+  @@index([agentId])
+}
+
+model Transaction {
+  id           String            @id @default(auto()) @map("_id") @db.ObjectId
+  txHash       String            @unique
+  agentId      String
+  callerWallet String
+  ownerWallet  String
+  amount       Float
+  platformFee  Float             @default(0)
+  type         TransactionType
+  status       TransactionStatus @default(pending)
+  createdAt    DateTime          @default(now())
+
+  agent        Agent             @relation(fields: [agentId], references: [agentId])
+  caller       User              @relation(fields: [callerWallet], references: [walletAddress])
+
+  @@index([agentId])
+  @@index([callerWallet])
+  @@index([ownerWallet])
+}
+
+model Interaction {
+  id                  String            @id @default(auto()) @map("_id") @db.ObjectId
+  agentId             String
+  callerWallet        String?
+  task                String?
+  response            String?
+  latency             Int?
+  status              InteractionStatus @default(success)
+  txHash              String?
+  parentInteractionId String?
+  callDepth           Int               @default(0)
+  errorMessage        String?
+  createdAt           DateTime          @default(now())
+
+  agent               Agent             @relation(fields: [agentId], references: [agentId])
+  caller              User?             @relation(fields: [callerWallet], references: [walletAddress])
+
+  @@index([agentId])
+  @@index([callerWallet])
+  @@index([agentId, createdAt])
+}
+
+model UsageMetrics {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  agentId     String   @unique
+  calls       Int      @default(0)
+  successRate Float    @default(100)
+  revenue     Float    @default(0)
+  avgLatency  Float    @default(0)
+  dailyCalls  Json     @default("{}")
+  updatedAt   DateTime @updatedAt
+
+  agent       Agent    @relation(fields: [agentId], references: [agentId])
+}
+
+model GlobalStats {
+  id           String   @id @map("_id") @default("global")
+  totalAgents  Int      @default(0)
+  activeAgents Int      @default(0)
+  totalCalls   Int      @default(0)
+  totalRevenue Float    @default(0)
+  updatedAt    DateTime @updatedAt
+}
