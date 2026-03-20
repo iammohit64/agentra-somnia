@@ -4,16 +4,8 @@ import {
   Heart, MessageSquare, Trash2, ChevronDown, ChevronUp,
   Send, Star, User, Reply, Loader2, AlertCircle
 } from 'lucide-react'
-import api from '../../api/axios'
+import { agentsAPI } from '../../api/agents'
 import { useAuthStore } from '../../stores/authStore'
-
-// ── API helpers ───────────────────────────────────────────────
-const reviewsAPI = {
-  get: (agentId, page = 1) => api.get(`/agents/${agentId}/reviews`, { params: { page } }),
-  create: (agentId, data) => api.post(`/agents/${agentId}/reviews`, data),
-  like: (reviewId) => api.post(`/reviews/${reviewId}/like`),
-  delete: (reviewId) => api.delete(`/reviews/${reviewId}`),
-}
 
 // ── Single Review Component ───────────────────────────────────
 function ReviewItem({ review, agentId, currentWallet, onLike, onReply, onDelete, depth = 0 }) {
@@ -70,7 +62,6 @@ function ReviewItem({ review, agentId, currentWallet, onLike, onReply, onDelete,
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Star rating if present */}
             {review.rating > 0 && (
               <div className="flex items-center gap-1">
                 {Array.from({ length: 5 }).map((_, i) => (
@@ -83,7 +74,6 @@ function ReviewItem({ review, agentId, currentWallet, onLike, onReply, onDelete,
                 ))}
               </div>
             )}
-            {/* Delete */}
             {isOwner && (
               <button
                 onClick={() => onDelete(review.id)}
@@ -102,7 +92,6 @@ function ReviewItem({ review, agentId, currentWallet, onLike, onReply, onDelete,
 
         {/* Actions */}
         <div className="flex items-center gap-4">
-          {/* Like */}
           {currentWallet && (
             <button
               onClick={() => onLike(review.id)}
@@ -119,7 +108,6 @@ function ReviewItem({ review, agentId, currentWallet, onLike, onReply, onDelete,
             </button>
           )}
 
-          {/* Reply */}
           {currentWallet && depth < maxDepth && (
             <button
               onClick={() => setReplying(!replying)}
@@ -130,7 +118,6 @@ function ReviewItem({ review, agentId, currentWallet, onLike, onReply, onDelete,
             </button>
           )}
 
-          {/* Toggle replies */}
           {review.replies?.length > 0 && (
             <button
               onClick={() => setShowReplies(!showReplies)}
@@ -159,9 +146,7 @@ function ReviewItem({ review, agentId, currentWallet, onLike, onReply, onDelete,
                   placeholder="Write a reply..."
                   rows={2}
                   className="input-field flex-1 px-3 py-2 rounded-lg text-sm resize-none"
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && e.metaKey) handleReplySubmit()
-                  }}
+                  onKeyDown={e => { if (e.key === 'Enter' && e.metaKey) handleReplySubmit() }}
                 />
                 <button
                   onClick={handleReplySubmit}
@@ -250,10 +235,11 @@ export default function ReviewSection({ agentId }) {
     setLoading(true)
     setError(null)
     try {
-      const res = await reviewsAPI.get(agentId, p)
-      setReviews(p === 1 ? res.data.reviews : prev => [...prev, ...res.data.reviews])
-      setTotalPages(res.data.pages)
-      setTotalLikes(res.data.totalLikes)
+      const res = await agentsAPI.getReviews(agentId, p)
+      const data = res.data
+      setReviews(p === 1 ? (data.reviews || []) : prev => [...prev, ...(data.reviews || [])])
+      setTotalPages(data.pages || 1)
+      setTotalLikes(data.totalLikes || 0)
     } catch (e) {
       setError('Failed to load reviews')
     } finally {
@@ -266,13 +252,14 @@ export default function ReviewSection({ agentId }) {
   const handleSubmit = async () => {
     if (!newComment.trim() || submitting) return
     setSubmitting(true)
+    setError(null)
     try {
-      await reviewsAPI.create(agentId, { content: newComment, rating: newRating })
+      await agentsAPI.createReview(agentId, { content: newComment, rating: newRating })
       setNewComment('')
       setNewRating(0)
-      fetchReviews(1)
+      await fetchReviews(1)
     } catch (e) {
-      setError('Failed to post review')
+      setError(e?.response?.data?.error || 'Failed to post review')
     } finally {
       setSubmitting(false)
     }
@@ -281,23 +268,22 @@ export default function ReviewSection({ agentId }) {
   const handleLike = async (reviewId) => {
     if (!walletAddress) return
     try {
-      const res = await reviewsAPI.like(reviewId)
-      // Optimistically update likes in tree
+      const res = await agentsAPI.likeReview(reviewId)
       setReviews(prev => updateReviewLikes(prev, reviewId, walletAddress, res.data.liked))
       setTotalLikes(prev => prev + (res.data.liked ? 1 : -1))
     } catch (e) { /* ignore */ }
   }
 
   const handleReply = async (content, parentId) => {
-    await reviewsAPI.create(agentId, { content, parentId })
-    fetchReviews(1)
+    await agentsAPI.createReview(agentId, { content, parentId })
+    await fetchReviews(1)
   }
 
   const handleDelete = async (reviewId) => {
     if (!window.confirm('Delete this comment?')) return
     try {
-      await reviewsAPI.delete(reviewId)
-      fetchReviews(1)
+      await agentsAPI.deleteReview(reviewId)
+      await fetchReviews(1)
     } catch (e) { /* ignore */ }
   }
 
@@ -342,6 +328,11 @@ export default function ReviewSection({ agentId }) {
             rows={3}
             className="input-field w-full px-4 py-3 rounded-xl text-sm resize-none mb-3"
           />
+          {error && (
+            <div className="flex items-center gap-2 text-[var(--color-danger)] text-xs mb-3 p-2 rounded-lg bg-[rgba(248,113,113,0.08)] border border-[rgba(248,113,113,0.2)]">
+              <AlertCircle size={13} /> {error}
+            </div>
+          )}
           <div className="flex items-center justify-between">
             <span className="text-[9px] font-mono text-[var(--color-text-dim)]">
               {newComment.length}/5000
@@ -360,13 +351,6 @@ export default function ReviewSection({ agentId }) {
         <div className="glass-card-landing rounded-xl p-5 text-center">
           <MessageSquare size={24} className="mx-auto mb-2 text-[var(--color-text-dim)] opacity-40" />
           <p className="text-[var(--color-text-muted)] text-sm font-mono">Connect wallet to write a review</p>
-        </div>
-      )}
-
-      {/* Error */}
-      {error && (
-        <div className="flex items-center gap-2 text-[var(--color-danger)] text-sm p-3 rounded-lg bg-[rgba(248,113,113,0.08)] border border-[rgba(248,113,113,0.2)]">
-          <AlertCircle size={14} /> {error}
         </div>
       )}
 

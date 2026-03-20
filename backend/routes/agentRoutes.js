@@ -11,6 +11,7 @@ import {
   searchAgents,
   purchaseAccess,
   upvoteAgent,
+  checkUpvote,
   checkAccess,
 } from '../controllers/agentController.js'
 
@@ -18,6 +19,7 @@ import { authMiddleware, optionalAuth } from '../middlewares/auth.js'
 import { deployLimiter } from '../middlewares/rateLimiter.js'
 
 import { getAgentMetrics } from '../controllers/analyticsController.js'
+import { getReviews, createReview } from '../controllers/reviewController.js'
 
 const router = Router()
 
@@ -51,11 +53,18 @@ router.delete('/:id/draft', authMiddleware, cancelDraft)
 // Purchase access (monthly / lifetime)
 router.post('/:agentId/purchase', authMiddleware, purchaseAccess)
 
-// Upvote agent (paid)
+// Upvote agent
 router.post('/:agentId/upvote', authMiddleware, upvoteAgent)
+
+// Check if user has upvoted
+router.get('/:agentId/upvote-status', authMiddleware, checkUpvote)
 
 // Check access
 router.get('/:agentId/access', authMiddleware, checkAccess)
+
+// Reviews
+router.get('/:agentId/reviews', optionalAuth, getReviews)
+router.post('/:agentId/reviews', authMiddleware, createReview)
 
 // Update / Delete
 router.put('/:id', authMiddleware, updateAgent)

@@ -15,6 +15,7 @@ import agentRoutes from './routes/agentRoutes.js'
 import authRoutes from './routes/authRoutes.js'
 import executionRoutes from './routes/executionRoutes.js'
 import analyticsRoutes from './routes/analyticsRoutes.js'
+import reviewRoutes from './routes/reviewRoutes.js'
 
 const app = express()
 
@@ -65,6 +66,7 @@ app.use('/api/auth', authRoutes)
 app.use('/api/agents', agentRoutes)
 app.use('/api', executionRoutes)
 app.use('/api', analyticsRoutes)
+app.use('/api', reviewRoutes)
 
 // ── 404 handler ────────────────────────────────────────────
 app.use('*', (req, res) => {

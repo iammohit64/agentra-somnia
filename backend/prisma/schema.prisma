@@ -73,6 +73,9 @@ model User {
   transactions  Transaction[]
   interactions  Interaction[]
   accesses      AgentAccess[]
+  upvotes       AgentUpvote[]
+  reviews       Review[]
+  reviewLikes   ReviewLike[]
 }
 
 //////////////////////////////////////////////////
@@ -96,7 +99,9 @@ model Agent {
   endpoint        String
 
   tier            AgentTier
-  pricing         String
+  pricing         String        // monthly price in wei
+  lifetimeMultiplier Int        @default(12) // lifetime = monthly * this
+
   upvotes         Int           @default(0)
 
   category        AgentCategory @default(Data)
@@ -122,10 +127,34 @@ model Agent {
   transactions    Transaction[]
   interactions    Interaction[]
   metrics         UsageMetrics?
+  upvoteRecords   AgentUpvote[]
+  reviews         Review[]
 
   @@index([ownerWallet])
   @@index([status])
   @@index([category])
+}
+
+//////////////////////////////////////////////////
+// UPVOTE TRACKING (deduplication)
+//////////////////////////////////////////////////
+
+model AgentUpvote {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+
+  agentId     String
+  voterWallet String
+
+  txHash      String?
+
+  agent       Agent    @relation(fields: [agentId], references: [agentId])
+  voter       User     @relation(fields: [voterWallet], references: [walletAddress])
+
+  createdAt   DateTime @default(now())
+
+  @@unique([agentId, voterWallet])
+  @@index([agentId])
+  @@index([voterWallet])
 }
 
 //////////////////////////////////////////////////
@@ -140,6 +169,7 @@ model AgentAccess {
 
   expiresAt   DateTime
   isLifetime  Boolean  @default(false)
+  txHash      String?
 
   agent       Agent    @relation(fields: [agentId], references: [agentId])
   user        User     @relation(fields: [userWallet], references: [walletAddress])
@@ -212,6 +242,49 @@ model Interaction {
   @@index([agentId])
   @@index([callerWallet])
   @@index([agentId, createdAt])
+}
+
+//////////////////////////////////////////////////
+// REVIEWS / COMMENTS
+//////////////////////////////////////////////////
+
+model Review {
+  id            String       @id @default(auto()) @map("_id") @db.ObjectId
+
+  agentId       String
+  agent         Agent        @relation(fields: [agentId], references: [agentId])
+
+  authorWallet  String
+  author        User         @relation(fields: [authorWallet], references: [walletAddress])
+
+  content       String
+  rating        Int          @default(0) // 0 = no rating, 1-5
+
+  parentId      String?      // null = top-level, set = reply
+
+  likes         ReviewLike[]
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([agentId])
+  @@index([authorWallet])
+  @@index([parentId])
+}
+
+model ReviewLike {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+
+  reviewId      String
+  review        Review   @relation(fields: [reviewId], references: [id])
+
+  walletAddress String
+  liker         User     @relation(fields: [walletAddress], references: [walletAddress])
+
+  createdAt     DateTime @default(now())
+
+  @@unique([reviewId, walletAddress])
+  @@index([reviewId])
 }
 
 //////////////////////////////////////////////////

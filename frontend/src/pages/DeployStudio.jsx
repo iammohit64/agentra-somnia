@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react'
 import { motion, AnimatePresence, useInView } from 'framer-motion'
 import {
   Upload, ChevronRight, Check, Globe, Tag, DollarSign,
-  Zap, Database, Link2, Sparkles, Rocket, AlertTriangle, Wallet
+  Zap, Database, Link2, Sparkles, Rocket, AlertTriangle, Wallet, Info
 } from 'lucide-react'
 import { useAccount, useWriteContract, usePublicClient } from 'wagmi'
 import { parseUnits, decodeEventLog } from 'viem'
@@ -32,22 +32,20 @@ const STEPS = [
   { id: 2, label: 'IDENTITY', icon: Zap, description: 'Name & category' },
   { id: 3, label: 'ENDPOINT', icon: Globe, description: 'MCP schema' },
   { id: 4, label: 'METADATA', icon: Tag, description: 'Tags & description' },
-  { id: 5, label: 'PRICING', icon: DollarSign, description: 'Pay-per-call' },
+  { id: 5, label: 'PRICING', icon: DollarSign, description: 'Monthly & lifetime' },
   { id: 6, label: 'DEPLOY', icon: Upload, description: 'Publish agent' },
 ]
 
 const CATEGORIES = ['Analysis', 'Development', 'Security', 'Data', 'NLP', 'Web3', 'Other']
 
-// Tier config aligned with smart contract
-// Standard=0 (50 AGT), Professional=1 (150 AGT), Enterprise=2 (500 AGT)
 const TIER_OPTIONS = [
   {
     label: 'STANDARD',
     tier: 'Standard',
     tierIndex: 0,
-    listingFee: '50',      // AGT
+    listingFee: '50',
     desc: 'Basic tier — suitable for most agents',
-    suggestedPrice: '0.01',
+    suggestedMonthly: '1',
   },
   {
     label: 'PROFESSIONAL',
@@ -55,7 +53,7 @@ const TIER_OPTIONS = [
     tierIndex: 1,
     listingFee: '150',
     desc: 'Professional tier — advanced features',
-    suggestedPrice: '0.05',
+    suggestedMonthly: '5',
   },
   {
     label: 'ENTERPRISE',
@@ -63,8 +61,15 @@ const TIER_OPTIONS = [
     tierIndex: 2,
     listingFee: '500',
     desc: 'Enterprise tier — full capabilities',
-    suggestedPrice: '0.15',
+    suggestedMonthly: '15',
   },
+]
+
+// Lifetime multiplier options
+const LIFETIME_MULTIPLIERS = [
+  { value: 6, label: '6 months (×6)' },
+  { value: 12, label: '12 months (×12) — recommended' },
+  { value: 24, label: '24 months (×24)' },
 ]
 
 const InputField = ({ label, field, type = 'text', placeholder, rows, form, update }) => (
@@ -108,9 +113,10 @@ export default function DeployStudio() {
     mcpSchema: '',
     description: '',
     tags: '',
-    tier: '',          // 'Standard' | 'Professional' | 'Enterprise'
+    tier: '',
     tierIndex: 0,
-    pricing: '',       // human-readable AGT monthly price set by creator
+    monthlyPrice: '',      // AGT — monthly access price set by creator
+    lifetimeMultiplier: 12, // How many monthly periods = 1 lifetime
     testPassed: false,
   })
 
@@ -119,6 +125,13 @@ export default function DeployStudio() {
   const isDatabase = form.deployMode === 'database'
 
   const selectedTier = TIER_OPTIONS.find(t => t.tier === form.tier)
+
+  // Derived pricing display
+  const monthlyNum = parseFloat(form.monthlyPrice) || 0
+  const lifetimeNum = monthlyNum * form.lifetimeMultiplier
+  const creatorMonthly = (monthlyNum * 0.8).toFixed(4)
+  const platformMonthly = (monthlyNum * 0.2).toFixed(4)
+  const creatorLifetime = (lifetimeNum * 0.8).toFixed(4)
 
   const handleDeploy = async () => {
     if (!isConnected) return
@@ -133,8 +146,12 @@ export default function DeployStudio() {
         catch { throw new Error('Invalid MCP Schema JSON — please fix it before deploying.') }
       }
 
-      // pricing in wei (creator sets monthly price)
-      const pricingWei = parseUnits(form.pricing || '0', 18).toString()
+      if (!form.monthlyPrice || parseFloat(form.monthlyPrice) < 0) {
+        throw new Error('Please set a monthly access price (can be 0 for free).')
+      }
+
+      // Monthly price in wei
+      const pricingWei = parseUnits(form.monthlyPrice || '0', 18).toString()
 
       const payload = {
         name: form.name,
@@ -145,21 +162,18 @@ export default function DeployStudio() {
         tags: form.tags.split(',').map(t => t.trim()).filter(Boolean),
         tier: form.tier,
         pricing: pricingWei,
+        lifetimeMultiplier: form.lifetimeMultiplier,
         deployMode: form.deployMode,
       }
 
-      // ══════════════════════════════════════
-      // FLOW 1: DATABASE ONLY (Off-chain)
-      // ══════════════════════════════════════
+      // ── DATABASE ONLY ──
       if (isDatabase) {
         await agentsAPI.deploy(payload)
         setDeployed(true)
         return
       }
 
-      // ══════════════════════════════════════
-      // FLOW 2: BLOCKCHAIN + DB
-      // ══════════════════════════════════════
+      // ── BLOCKCHAIN + DB ──
       const currentNetwork = chain?.id ? CHAIN_CONFIG[chain.id] : null
       if (!currentNetwork?.contracts) {
         throw new Error('Smart contracts not found for the current network. Please switch chains.')
@@ -167,15 +181,13 @@ export default function DeployStudio() {
 
       const { Agentra, AgentToken } = currentNetwork.contracts
 
-      // Step 1: Create DB draft → get id + metadataURI
+      // Step 1: Create DB draft
       const draftRes = await agentsAPI.deploy({ ...payload, deployMode: 'blockchain' })
       draftId = draftRes.data.id
       const metadataURI = draftRes.data.metadataUri || `ipfs://pending-${draftId}`
 
-      // Step 2: Listing fee in wei (paid fully to platform)
+      // Step 2: Approve listing fee
       const listingFeeWei = parseUnits(selectedTier?.listingFee || '50', 18)
-
-      // Step 3: Approve listing fee
       const approveTx = await writeContractAsync({
         address: AgentToken.address,
         abi: AgentToken.abi,
@@ -184,8 +196,8 @@ export default function DeployStudio() {
       })
       await publicClient.waitForTransactionReceipt({ hash: approveTx })
 
-      // Step 4: Deploy agent on-chain
-      const monthlyPriceWei = parseUnits(form.pricing || '0', 18)
+      // Step 3: Deploy agent on-chain (monthly price goes into contract for access checks)
+      const monthlyPriceWei = parseUnits(form.monthlyPrice || '0', 18)
       const deployTx = await writeContractAsync({
         address: Agentra.address,
         abi: Agentra.abi,
@@ -194,25 +206,19 @@ export default function DeployStudio() {
       })
       const receipt = await publicClient.waitForTransactionReceipt({ hash: deployTx })
 
-      // Step 5: Parse AgentDeployed event to get contractAgentId
+      // Step 4: Parse AgentDeployed event
       let contractAgentId = null
       for (const log of receipt.logs) {
         try {
-          const decoded = decodeEventLog({
-            abi: Agentra.abi,
-            data: log.data,
-            topics: log.topics,
-          })
+          const decoded = decodeEventLog({ abi: Agentra.abi, data: log.data, topics: log.topics })
           if (decoded.eventName === 'AgentDeployed') {
             contractAgentId = decoded.args.agentId?.toString()
             break
           }
-        } catch {
-          // Skip non-matching logs
-        }
+        } catch { /* skip */ }
       }
 
-      // Step 6: Confirm in backend → marks draft as active
+      // Step 5: Confirm in backend
       await agentsAPI.confirmDeploy(draftId, receipt.transactionHash, contractAgentId)
       setDeployed(true)
 
@@ -220,8 +226,6 @@ export default function DeployStudio() {
       console.error('Deploy error:', error)
       const msg = error.shortMessage || error.message || 'Unknown error'
       setDeployError(msg)
-
-      // Rollback: delete orphaned draft
       if (draftId && isBlockchain) {
         await agentsAPI.cancelDraft(draftId).catch(e => console.error('Rollback failed:', e))
       }
@@ -231,11 +235,10 @@ export default function DeployStudio() {
   }
 
   const canProceedFromStep1 = !!form.deployMode && isConnected
-  const canDeploy = isConnected && form.name && form.category && form.tier && form.pricing
+  const canDeploy = isConnected && form.name && form.category && form.tier && form.monthlyPrice !== ''
 
   return (
     <div className="relative min-h-screen">
-      {/* Ambient glows */}
       <div className="fixed top-20 right-10 w-[500px] h-[400px] rounded-full pointer-events-none opacity-25"
         style={{ background: 'radial-gradient(ellipse, rgba(124,58,237,0.08) 0%, transparent 70%)' }} />
       <div className="fixed bottom-20 left-10 w-[400px] h-[300px] rounded-full pointer-events-none opacity-25"
@@ -268,11 +271,10 @@ export default function DeployStudio() {
                   <React.Fragment key={s.id}>
                     <motion.div
                       whileHover={isDone ? { y: -2, scale: 1.02 } : {}}
-                      whileTap={isDone ? { scale: 0.98 } : {}}
                       onClick={() => isDone && setStep(s.id)}
                       className={`relative flex items-center gap-2.5 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl transition-all shrink-0 ${isDone ? 'cursor-pointer' : ''} ${
                         isActive
-                          ? 'bg-[rgba(124,58,237,0.12)] border border-[rgba(124,58,237,0.4)] text-[var(--color-purple-bright)] shadow-[0_0_20px_rgba(124,58,237,0.1)]'
+                          ? 'bg-[rgba(124,58,237,0.12)] border border-[rgba(124,58,237,0.4)] text-[var(--color-purple-bright)]'
                           : isDone
                           ? 'bg-[rgba(52,211,153,0.08)] border border-[rgba(52,211,153,0.25)] text-[var(--color-success)]'
                           : 'text-[var(--color-text-dim)] border border-transparent'
@@ -288,11 +290,7 @@ export default function DeployStudio() {
                         <div className="text-[9px] opacity-50">{s.description}</div>
                       </div>
                       {isActive && (
-                        <motion.div
-                          layoutId="step-indicator"
-                          className="absolute inset-0 rounded-xl border-2 border-[var(--color-purple-bright)] pointer-events-none"
-                          transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-                        />
+                        <motion.div layoutId="step-indicator" className="absolute inset-0 rounded-xl border-2 border-[var(--color-purple-bright)] pointer-events-none" transition={{ type: 'spring', stiffness: 300, damping: 30 }} />
                       )}
                     </motion.div>
                     {i < STEPS.length - 1 && (
@@ -302,7 +300,6 @@ export default function DeployStudio() {
                 )
               })}
             </div>
-            {/* Progress bar */}
             <div className="mt-4 h-1 bg-[var(--color-nebula-deep)] rounded-full overflow-hidden">
               <motion.div
                 initial={{ width: 0 }}
@@ -316,13 +313,7 @@ export default function DeployStudio() {
 
         {/* Step content */}
         <AnimatePresence mode="wait">
-          <motion.div
-            key={step}
-            initial={{ opacity: 0, x: 16 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -16 }}
-            transition={{ duration: 0.2 }}
-          >
+          <motion.div key={step} initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} transition={{ duration: 0.2 }}>
             <div className="glass-card-landing rounded-2xl p-6 sm:p-8">
 
               {/* ── STEP 1: DEPLOY MODE ── */}
@@ -347,7 +338,7 @@ export default function DeployStudio() {
                       <div>
                         <div className="text-[var(--color-warning)] text-[11px] font-mono font-bold tracking-widest mb-1">WALLET REQUIRED</div>
                         <div className="text-[var(--color-text-muted)] text-xs leading-relaxed">
-                          Connect your wallet via the top bar before deploying. Your address identifies ownership on-chain and in the dashboard.
+                          Connect your wallet via the top bar before deploying.
                         </div>
                       </div>
                     </motion.div>
@@ -358,70 +349,44 @@ export default function DeployStudio() {
                     <motion.button whileHover={{ scale: 1.02, y: -2 }} whileTap={{ scale: 0.99 }}
                       onClick={() => update('deployMode', 'database')}
                       className={`relative p-5 sm:p-6 rounded-2xl border text-left transition-all cursor-pointer overflow-hidden ${
-                        isDatabase ? 'bg-[rgba(52,211,153,0.08)] border-[rgba(52,211,153,0.4)] shadow-[0_0_30px_rgba(52,211,153,0.1)]' : 'border-[var(--color-border)] hover:border-[rgba(52,211,153,0.3)] bg-black/20'
+                        isDatabase ? 'bg-[rgba(52,211,153,0.08)] border-[rgba(52,211,153,0.4)]' : 'border-[var(--color-border)] hover:border-[rgba(52,211,153,0.3)] bg-black/20'
                       }`}>
-                      {isDatabase && <div className="absolute inset-0 bg-gradient-to-br from-[rgba(52,211,153,0.08)] to-transparent pointer-events-none" />}
-                      <div className="relative z-10">
-                        <div className="flex items-center gap-3 mb-4">
-                          <div className={`w-11 h-11 rounded-xl flex items-center justify-center border transition-all ${isDatabase ? 'bg-[rgba(52,211,153,0.15)] border-[rgba(52,211,153,0.4)]' : 'bg-[var(--color-nebula-deep)] border-[var(--color-border)]'}`}>
-                            <Database size={20} className={isDatabase ? 'text-[var(--color-success)]' : 'text-[var(--color-text-dim)]'} />
-                          </div>
-                          <div>
-                            <div className={`font-mono font-bold text-xs tracking-widest ${isDatabase ? 'text-[var(--color-success)]' : 'text-[var(--color-text-secondary)]'}`}>DATABASE ONLY</div>
-                            <div className="text-[9px] font-mono mt-0.5 text-[var(--color-text-dim)]">OFF-CHAIN · NO GAS</div>
-                          </div>
-                          {isDatabase && (
-                            <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="ml-auto w-6 h-6 rounded-full bg-[var(--color-success)] flex items-center justify-center">
-                              <Check size={14} className="text-black" />
-                            </motion.div>
-                          )}
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className={`w-11 h-11 rounded-xl flex items-center justify-center border ${isDatabase ? 'bg-[rgba(52,211,153,0.15)] border-[rgba(52,211,153,0.4)]' : 'bg-[var(--color-nebula-deep)] border-[var(--color-border)]'}`}>
+                          <Database size={20} className={isDatabase ? 'text-[var(--color-success)]' : 'text-[var(--color-text-dim)]'} />
                         </div>
-                        <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-                          Agent stored in database only. Full marketplace access — execution, ratings, leaderboard — with no gas fees or token requirements.
-                        </p>
+                        <div>
+                          <div className={`font-mono font-bold text-xs tracking-widest ${isDatabase ? 'text-[var(--color-success)]' : 'text-[var(--color-text-secondary)]'}`}>DATABASE ONLY</div>
+                          <div className="text-[9px] font-mono mt-0.5 text-[var(--color-text-dim)]">OFF-CHAIN · NO GAS</div>
+                        </div>
+                        {isDatabase && <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="ml-auto w-6 h-6 rounded-full bg-[var(--color-success)] flex items-center justify-center"><Check size={14} className="text-black" /></motion.div>}
                       </div>
+                      <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
+                        Agent stored in database only. Full marketplace access with no gas fees. Access purchases tracked in our DB, no wallet tx for buyers.
+                      </p>
                     </motion.button>
 
                     {/* Blockchain */}
                     <motion.button whileHover={{ scale: 1.02, y: -2 }} whileTap={{ scale: 0.99 }}
                       onClick={() => update('deployMode', 'blockchain')}
                       className={`relative p-5 sm:p-6 rounded-2xl border text-left transition-all cursor-pointer overflow-hidden ${
-                        isBlockchain ? 'bg-[rgba(124,58,237,0.1)] border-[rgba(124,58,237,0.5)] shadow-[0_0_30px_rgba(124,58,237,0.12)]' : 'border-[var(--color-border)] hover:border-[rgba(124,58,237,0.3)] bg-black/20'
+                        isBlockchain ? 'bg-[rgba(124,58,237,0.1)] border-[rgba(124,58,237,0.5)]' : 'border-[var(--color-border)] hover:border-[rgba(124,58,237,0.3)] bg-black/20'
                       }`}>
-                      {isBlockchain && <div className="absolute inset-0 bg-gradient-to-br from-[rgba(124,58,237,0.1)] to-transparent pointer-events-none" />}
-                      <div className="relative z-10">
-                        <div className="flex items-center gap-3 mb-4">
-                          <div className={`w-11 h-11 rounded-xl flex items-center justify-center border transition-all ${isBlockchain ? 'bg-[rgba(124,58,237,0.15)] border-[rgba(124,58,237,0.4)]' : 'bg-[var(--color-nebula-deep)] border-[var(--color-border)]'}`}>
-                            <Link2 size={20} className={isBlockchain ? 'text-[var(--color-purple-bright)]' : 'text-[var(--color-text-dim)]'} />
-                          </div>
-                          <div>
-                            <div className={`font-mono font-bold text-xs tracking-widest ${isBlockchain ? 'text-[var(--color-purple-bright)]' : 'text-[var(--color-text-secondary)]'}`}>BLOCKCHAIN + DB</div>
-                            <div className="text-[9px] font-mono mt-0.5 text-[var(--color-text-dim)]">ON-CHAIN · AGT FEE</div>
-                          </div>
-                          {isBlockchain && (
-                            <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="ml-auto w-6 h-6 rounded-full bg-[var(--color-purple-bright)] flex items-center justify-center">
-                              <Check size={14} className="text-white" />
-                            </motion.div>
-                          )}
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className={`w-11 h-11 rounded-xl flex items-center justify-center border ${isBlockchain ? 'bg-[rgba(124,58,237,0.15)] border-[rgba(124,58,237,0.4)]' : 'bg-[var(--color-nebula-deep)] border-[var(--color-border)]'}`}>
+                          <Link2 size={20} className={isBlockchain ? 'text-[var(--color-purple-bright)]' : 'text-[var(--color-text-dim)]'} />
                         </div>
-                        <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-                          Agent registered on-chain. Trustless access control, on-chain payments (80% to you / 20% platform fee), immutable ownership.
-                        </p>
+                        <div>
+                          <div className={`font-mono font-bold text-xs tracking-widest ${isBlockchain ? 'text-[var(--color-purple-bright)]' : 'text-[var(--color-text-secondary)]'}`}>BLOCKCHAIN + DB</div>
+                          <div className="text-[9px] font-mono mt-0.5 text-[var(--color-text-dim)]">ON-CHAIN · AGT FEE</div>
+                        </div>
+                        {isBlockchain && <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="ml-auto w-6 h-6 rounded-full bg-[var(--color-purple-bright)] flex items-center justify-center"><Check size={14} className="text-white" /></motion.div>}
                       </div>
+                      <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
+                        Agent registered on-chain. Trustless access control, buyers pay via wallet (80% to you / 20% platform), immutable ownership.
+                      </p>
                     </motion.button>
                   </div>
-
-                  {form.deployMode && isConnected && (
-                    <motion.div initial={{ opacity: 0, y: 6, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }}
-                      className={`flex items-center gap-3 text-[11px] font-mono px-4 py-3 rounded-xl border w-fit ${
-                        isDatabase ? 'border-[rgba(52,211,153,0.25)] text-[var(--color-success)] bg-[rgba(52,211,153,0.05)]' : 'border-[rgba(124,58,237,0.25)] text-[var(--color-purple-bright)] bg-[rgba(124,58,237,0.05)]'
-                      }`}>
-                      <Check size={14} />
-                      {isDatabase
-                        ? `Database deploy · wallet ${walletAddress?.slice(0, 8)}... stored`
-                        : `On-chain deploy · wallet ${walletAddress?.slice(0, 8)}... stored`}
-                    </motion.div>
-                  )}
                 </div>
               )}
 
@@ -429,8 +394,7 @@ export default function DeployStudio() {
               {step === 2 && (
                 <div className="space-y-6">
                   <h2 className="font-display font-bold text-xl sm:text-2xl text-[var(--color-text-primary)] mb-6 flex items-center gap-3">
-                    <Zap size={20} className="text-[var(--color-purple-bright)]" />
-                    Agent Identity
+                    <Zap size={20} className="text-[var(--color-purple-bright)]" /> Agent Identity
                   </h2>
                   <InputField label="AGENT NAME" field="name" placeholder="e.g. DataSynth-X" form={form} update={update} />
                   <div>
@@ -441,8 +405,8 @@ export default function DeployStudio() {
                           onClick={() => update('category', cat)}
                           className={`py-2.5 px-4 rounded-xl text-[10px] font-mono border transition-all cursor-pointer ${
                             form.category === cat
-                              ? 'bg-[rgba(124,58,237,0.12)] border-[var(--color-purple-core)] text-[var(--color-purple-bright)] shadow-[0_0_15px_rgba(124,58,237,0.15)]'
-                              : 'border-[var(--color-border)] text-[var(--color-text-dim)] hover:border-[var(--color-border-bright)] hover:bg-[rgba(255,255,255,0.02)]'
+                              ? 'bg-[rgba(124,58,237,0.12)] border-[var(--color-purple-core)] text-[var(--color-purple-bright)]'
+                              : 'border-[var(--color-border)] text-[var(--color-text-dim)] hover:border-[var(--color-border-bright)]'
                           }`}>
                           {cat.toUpperCase()}
                         </motion.button>
@@ -456,22 +420,10 @@ export default function DeployStudio() {
               {step === 3 && (
                 <div className="space-y-6">
                   <h2 className="font-display font-bold text-xl sm:text-2xl text-[var(--color-text-primary)] mb-6 flex items-center gap-3">
-                    <Globe size={20} className="text-[var(--color-purple-bright)]" />
-                    MCP Endpoint
+                    <Globe size={20} className="text-[var(--color-purple-bright)]" /> MCP Endpoint
                   </h2>
                   <InputField label="ENDPOINT URL" field="endpoint" placeholder="https://your-agent.example.com" form={form} update={update} />
-                  <InputField label="MCP SCHEMA (JSON — optional)"
-                    field="mcpSchema" rows={8}
-                    placeholder={'{\n  "name": "my-agent",\n  "version": "1.0.0",\n  "tools": []\n}'}
-                    form={form} update={update}
-                  />
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-xl bg-black/30 border border-[var(--color-border)]">
-                    <div className="flex items-center gap-3">
-                      <Globe size={14} className="text-[var(--color-text-dim)]" />
-                      <span className="text-xs font-mono text-[var(--color-text-muted)]">Optional: Validate endpoint reachability</span>
-                    </div>
-                    <NeonButton variant="ghost" size="sm" onClick={() => update('testPassed', true)}>TEST CONNECTION</NeonButton>
-                  </div>
+                  <InputField label="MCP SCHEMA (JSON — optional)" field="mcpSchema" rows={8} placeholder={'{\n  "name": "my-agent",\n  "version": "1.0.0",\n  "tools": []\n}'} form={form} update={update} />
                 </div>
               )}
 
@@ -479,25 +431,22 @@ export default function DeployStudio() {
               {step === 4 && (
                 <div className="space-y-6">
                   <h2 className="font-display font-bold text-xl sm:text-2xl text-[var(--color-text-primary)] mb-6 flex items-center gap-3">
-                    <Tag size={20} className="text-[var(--color-purple-bright)]" />
-                    Metadata
+                    <Tag size={20} className="text-[var(--color-purple-bright)]" /> Metadata
                   </h2>
                   <InputField label="DESCRIPTION" field="description" rows={4} placeholder="Describe what your agent does..." form={form} update={update} />
                   <InputField label="TAGS (comma separated)" field="tags" placeholder="e.g. analysis, data, ml" form={form} update={update} />
                 </div>
               )}
 
-              {/* ── STEP 5: PRICING / TIER ── */}
+              {/* ── STEP 5: PRICING ── */}
               {step === 5 && (
                 <div className="space-y-6">
                   <div>
                     <h2 className="font-display font-bold text-xl sm:text-2xl text-[var(--color-text-primary)] mb-2 flex items-center gap-3">
-                      <DollarSign size={20} className="text-[var(--color-purple-bright)]" />
-                      Tier & Pricing
+                      <DollarSign size={20} className="text-[var(--color-purple-bright)]" /> Tier & Pricing
                     </h2>
                     <p className="text-[var(--color-text-muted)] text-sm">
-                      Choose your agent tier (one-time listing fee to platform) and set your monthly access price for users.
-                      Users pay you 80% and the platform 20% per purchase.
+                      Choose your tier (one-time listing fee to platform) and set your access prices. Users pay you 80%, platform takes 20%.
                     </p>
                   </div>
 
@@ -510,51 +459,98 @@ export default function DeployStudio() {
                           onClick={() => {
                             update('tier', tier.tier)
                             update('tierIndex', tier.tierIndex)
-                            if (!form.pricing) update('pricing', tier.suggestedPrice)
+                            if (!form.monthlyPrice) update('monthlyPrice', tier.suggestedMonthly)
                           }}
                           className={`p-5 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden ${
-                            form.tier === tier.tier
-                              ? 'bg-[rgba(124,58,237,0.1)] border-[var(--color-purple-core)] shadow-[0_0_20px_rgba(124,58,237,0.12)]'
-                              : 'border-[var(--color-border)] hover:border-[var(--color-border-bright)] bg-black/20'
+                            form.tier === tier.tier ? 'bg-[rgba(124,58,237,0.1)] border-[var(--color-purple-core)]' : 'border-[var(--color-border)] hover:border-[var(--color-border-bright)] bg-black/20'
                           }`}>
-                          {form.tier === tier.tier && <div className="absolute inset-0 bg-gradient-to-br from-[rgba(124,58,237,0.08)] to-transparent pointer-events-none" />}
-                          <div className="relative z-10">
-                            <div className="flex justify-between items-start mb-2">
-                              <div className={`text-[10px] font-mono font-bold tracking-widest ${form.tier === tier.tier ? 'text-[var(--color-purple-bright)]' : 'text-[var(--color-text-secondary)]'}`}>{tier.label}</div>
-                              {isBlockchain && (
-                                <div className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-purple-core)]/20 text-[var(--color-purple-bright)]">
-                                  {tier.listingFee} AGT fee
-                                </div>
-                              )}
-                            </div>
-                            <div className="text-[10px] opacity-60 mt-1 text-[var(--color-text-muted)]">{tier.desc}</div>
+                          <div className="flex justify-between items-start mb-2">
+                            <div className={`text-[10px] font-mono font-bold tracking-widest ${form.tier === tier.tier ? 'text-[var(--color-purple-bright)]' : 'text-[var(--color-text-secondary)]'}`}>{tier.label}</div>
+                            {isBlockchain && (
+                              <div className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-purple-core)]/20 text-[var(--color-purple-bright)]">
+                                {tier.listingFee} AGT fee
+                              </div>
+                            )}
                           </div>
+                          <div className="text-[10px] opacity-60 mt-1 text-[var(--color-text-muted)]">{tier.desc}</div>
                         </motion.button>
                       ))}
                     </div>
                   </div>
 
-                  {/* Monthly pricing input */}
+                  {/* Monthly price */}
                   <div>
                     <label className="text-[9px] font-mono text-[var(--color-text-dim)] tracking-[0.2em] uppercase block mb-2.5">
-                      YOUR MONTHLY PRICE (AGT) — 80% goes to you
+                      MONTHLY ACCESS PRICE (AGT) — You receive 80%
                     </label>
                     <div className="relative">
                       <input
                         type="number"
                         min="0"
                         step="0.001"
-                        value={form.pricing}
-                        onChange={e => update('pricing', e.target.value)}
-                        placeholder="e.g. 0.05"
-                        className="input-field w-full px-4 py-3 rounded-xl text-sm focus:ring-2 focus:ring-[var(--color-purple-core)]/30 transition-all"
+                        value={form.monthlyPrice}
+                        onChange={e => update('monthlyPrice', e.target.value)}
+                        placeholder="e.g. 5"
+                        className="input-field w-full px-4 py-3 rounded-xl text-sm pr-20"
                       />
                       <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--color-text-dim)] text-xs font-mono">AGT/mo</span>
                     </div>
-                    {form.pricing && (
-                      <p className="text-[10px] font-mono text-[var(--color-text-dim)] mt-2">
-                        Per purchase: you receive <span className="text-[var(--color-success)]">{(parseFloat(form.pricing) * 0.8).toFixed(4)} AGT</span>, platform receives <span className="text-[var(--color-purple-bright)]">{(parseFloat(form.pricing) * 0.2).toFixed(4)} AGT</span>
-                      </p>
+                    {form.monthlyPrice && parseFloat(form.monthlyPrice) > 0 && (
+                      <div className="mt-2 flex gap-4 text-[10px] font-mono">
+                        <span className="text-[var(--color-success)]">You: {creatorMonthly} AGT/mo</span>
+                        <span className="text-[var(--color-purple-bright)]">Platform: {platformMonthly} AGT/mo</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Lifetime multiplier */}
+                  <div>
+                    <label className="text-[9px] font-mono text-[var(--color-text-dim)] tracking-[0.2em] uppercase block mb-2.5">
+                      LIFETIME ACCESS = MONTHLY × MULTIPLIER
+                    </label>
+                    <div className="grid grid-cols-3 gap-3">
+                      {LIFETIME_MULTIPLIERS.map(opt => (
+                        <motion.button
+                          key={opt.value}
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={() => update('lifetimeMultiplier', opt.value)}
+                          className={`p-3 rounded-xl border text-center transition-all cursor-pointer ${
+                            form.lifetimeMultiplier === opt.value
+                              ? 'bg-[rgba(52,211,153,0.1)] border-[var(--color-success)] text-[var(--color-success)]'
+                              : 'border-[var(--color-border)] text-[var(--color-text-dim)] hover:border-[var(--color-border-bright)]'
+                          }`}
+                        >
+                          <div className={`text-lg font-bold font-display ${form.lifetimeMultiplier === opt.value ? 'text-[var(--color-success)]' : 'text-[var(--color-text-secondary)]'}`}>×{opt.value}</div>
+                          <div className="text-[9px] font-mono mt-1 opacity-70">{opt.value} months</div>
+                        </motion.button>
+                      ))}
+                    </div>
+
+                    {/* Lifetime pricing preview */}
+                    {form.monthlyPrice && parseFloat(form.monthlyPrice) > 0 && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="mt-4 p-4 rounded-xl bg-[rgba(52,211,153,0.05)] border border-[rgba(52,211,153,0.2)]"
+                      >
+                        <div className="flex items-center gap-2 mb-3">
+                          <Info size={12} className="text-[var(--color-success)]" />
+                          <span className="text-[10px] font-mono text-[var(--color-success)] tracking-widest">PRICING SUMMARY</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="text-center p-3 rounded-lg bg-[rgba(124,58,237,0.08)] border border-[rgba(124,58,237,0.15)]">
+                            <div className="text-[9px] font-mono text-[var(--color-text-dim)] mb-1">30-DAY ACCESS</div>
+                            <div className="text-lg font-bold font-display text-[var(--color-purple-bright)]">{parseFloat(form.monthlyPrice).toFixed(4)} AGT</div>
+                            <div className="text-[9px] font-mono text-[var(--color-success)] mt-1">→ {creatorMonthly} AGT to you</div>
+                          </div>
+                          <div className="text-center p-3 rounded-lg bg-[rgba(52,211,153,0.08)] border border-[rgba(52,211,153,0.15)]">
+                            <div className="text-[9px] font-mono text-[var(--color-text-dim)] mb-1">LIFETIME (×{form.lifetimeMultiplier})</div>
+                            <div className="text-lg font-bold font-display text-[var(--color-success)]">{lifetimeNum.toFixed(4)} AGT</div>
+                            <div className="text-[9px] font-mono text-[var(--color-success)] mt-1">→ {creatorLifetime} AGT to you</div>
+                          </div>
+                        </div>
+                      </motion.div>
                     )}
                   </div>
                 </div>
@@ -564,8 +560,7 @@ export default function DeployStudio() {
               {step === 6 && (
                 <div className="space-y-6">
                   <h2 className="font-display font-bold text-xl sm:text-2xl text-[var(--color-text-primary)] mb-6 flex items-center gap-3">
-                    <Upload size={20} className="text-[var(--color-purple-bright)]" />
-                    Review & Deploy
+                    <Upload size={20} className="text-[var(--color-purple-bright)]" /> Review & Deploy
                   </h2>
 
                   <div className="space-y-0 rounded-xl overflow-hidden border border-[var(--color-border)] bg-black/20">
@@ -576,7 +571,9 @@ export default function DeployStudio() {
                       { label: 'CATEGORY', value: form.category || '—' },
                       { label: 'TIER', value: form.tier || '—' },
                       { label: 'ENDPOINT', value: form.endpoint || '—' },
-                      { label: 'MONTHLY PRICE', value: form.pricing ? `${form.pricing} AGT/mo` : '—' },
+                      { label: 'MONTHLY PRICE', value: form.monthlyPrice ? `${form.monthlyPrice} AGT/mo` : '—' },
+                      { label: 'LIFETIME PRICE', value: form.monthlyPrice ? `${lifetimeNum.toFixed(4)} AGT (×${form.lifetimeMultiplier})` : '—', highlight: 'success' },
+                      { label: 'YOUR MONTHLY CUT (80%)', value: form.monthlyPrice ? `${creatorMonthly} AGT` : '—', highlight: 'success' },
                       ...(isBlockchain && selectedTier ? [{ label: 'LISTING FEE (ONE-TIME)', value: `${selectedTier.listingFee} AGT → Platform`, highlight: 'warning' }] : []),
                     ].map((row, i) => (
                       <motion.div key={row.label} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
@@ -595,12 +592,10 @@ export default function DeployStudio() {
                   {!isConnected && (
                     <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
                       className="flex items-start gap-3.5 p-4 sm:p-5 rounded-xl bg-[rgba(248,113,113,0.06)] border border-[rgba(248,113,113,0.3)]">
-                      <div className="w-9 h-9 rounded-lg bg-[rgba(248,113,113,0.1)] flex items-center justify-center shrink-0">
-                        <AlertTriangle size={16} className="text-[var(--color-danger)]" />
-                      </div>
+                      <AlertTriangle size={16} className="text-[var(--color-danger)] shrink-0 mt-0.5" />
                       <div>
                         <div className="text-[var(--color-danger)] text-[11px] font-mono font-bold tracking-widest mb-1">WALLET NOT CONNECTED</div>
-                        <div className="text-[var(--color-text-muted)] text-xs">Connect your wallet to identify ownership and enable dashboard tracking.</div>
+                        <div className="text-[var(--color-text-muted)] text-xs">Connect your wallet to deploy.</div>
                       </div>
                     </motion.div>
                   )}
@@ -619,24 +614,20 @@ export default function DeployStudio() {
                   {!deployed ? (
                     <div className="space-y-4 pt-2">
                       {isDatabase && (
-                        <motion.div whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}>
-                          <NeonButton variant="success" size="lg" onClick={handleDeploy} loading={deploying} disabled={!canDeploy} className="w-full justify-center py-4 text-sm">
-                            <Database size={17} />
-                            {deploying ? 'SAVING TO DATABASE...' : 'SAVE TO DATABASE'}
-                          </NeonButton>
-                        </motion.div>
+                        <NeonButton variant="success" size="lg" onClick={handleDeploy} loading={deploying} disabled={!canDeploy} className="w-full justify-center py-4 text-sm">
+                          <Database size={17} />
+                          {deploying ? 'SAVING TO DATABASE...' : 'SAVE TO DATABASE'}
+                        </NeonButton>
                       )}
                       {isBlockchain && (
-                        <motion.div whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}>
-                          <NeonButton size="lg" onClick={handleDeploy} loading={deploying} disabled={!canDeploy} className="w-full justify-center py-4 text-sm">
-                            <Link2 size={17} />
-                            {deploying
-                              ? 'AWAITING WALLET TX...'
-                              : isConnected
-                              ? `⚡ DEPLOY ON-CHAIN (2 TXs — ${selectedTier?.listingFee || '?'} AGT fee)`
-                              : 'CONNECT WALLET TO DEPLOY'}
-                          </NeonButton>
-                        </motion.div>
+                        <NeonButton size="lg" onClick={handleDeploy} loading={deploying} disabled={!canDeploy} className="w-full justify-center py-4 text-sm">
+                          <Link2 size={17} />
+                          {deploying
+                            ? 'AWAITING WALLET TX...'
+                            : isConnected
+                            ? `⚡ DEPLOY ON-CHAIN (2 TXs — ${selectedTier?.listingFee || '?'} AGT fee)`
+                            : 'CONNECT WALLET TO DEPLOY'}
+                        </NeonButton>
                       )}
                     </div>
                   ) : (
@@ -654,8 +645,11 @@ export default function DeployStudio() {
                         <div className={`font-display font-bold text-xl sm:text-2xl mb-2 ${isDatabase ? 'text-[var(--color-success)]' : 'text-[var(--color-purple-bright)]'}`}>
                           AGENT {isDatabase ? 'SAVED' : 'DEPLOYED'}!
                         </div>
-                        <p className="text-[var(--color-text-muted)] text-sm mb-4">
-                          {isDatabase ? 'Your agent is now live on the marketplace.' : 'Your agent is now registered on-chain and live on the marketplace.'}
+                        <p className="text-[var(--color-text-muted)] text-sm mb-2">
+                          {isDatabase ? 'Your agent is now live on the marketplace.' : 'Your agent is now registered on-chain and live.'}
+                        </p>
+                        <p className="text-[var(--color-text-dim)] text-xs font-mono mb-4">
+                          Monthly: {form.monthlyPrice} AGT · Lifetime: {lifetimeNum.toFixed(4)} AGT
                         </p>
                         <div className="text-[var(--color-text-dim)] text-[11px] font-mono px-3 py-2 rounded-lg bg-black/30 border border-[var(--color-border)] inline-block">
                           OWNER: {walletAddress?.slice(0, 18)}...

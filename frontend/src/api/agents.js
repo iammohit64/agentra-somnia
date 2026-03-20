@@ -14,22 +14,25 @@ export const agentsAPI = {
 
   checkAccess: (agentId) => api.get(`/agents/${agentId}/access`),
 
+  checkUpvoteStatus: (agentId) => api.get(`/agents/${agentId}/upvote-status`),
+
   // ─────────────────────────────────────────────
   // DEPLOY AGENT FLOW
   // ─────────────────────────────────────────────
 
   /**
    * Create agent record.
-   * For database-only: status goes active immediately.
-   * For blockchain: status is DRAFT, awaiting confirmDeploy.
+   * pricing = monthly price in wei (string)
+   * lifetimeMultiplier = how many months = 1 lifetime (default 12)
    */
   deploy: (data) =>
     api.post('/agents/deploy', {
       name: data.name,
       description: data.description,
       endpoint: data.endpoint,
-      tier: data.tier,           // 'Standard' | 'Professional' | 'Enterprise'
-      pricing: data.pricing,     // wei string
+      tier: data.tier,
+      pricing: data.pricing,              // monthly price in wei string
+      lifetimeMultiplier: data.lifetimeMultiplier ?? 12,
       tags: data.tags || [],
       category: data.category,
       mcpSchema: data.mcpSchema || undefined,
@@ -38,9 +41,6 @@ export const agentsAPI = {
 
   /**
    * After on-chain tx confirmed, tell backend to activate the draft.
-   * @param {string} id - DB record id
-   * @param {string} txHash - deployment transaction hash
-   * @param {number|string} contractAgentId - uint256 from AgentDeployed event
    */
   confirmDeploy: (id, txHash, contractAgentId) =>
     api.post(`/agents/${id}/confirm`, {
@@ -55,36 +55,50 @@ export const agentsAPI = {
   // ─────────────────────────────────────────────
 
   /**
-   * Record a completed purchase in the backend DB.
-   * The actual ERC20 transfer happens client-side via wagmi writeContract.
-   * @param {string} agentId - agent's agentId field
-   * @param {boolean} isLifetime
-   * @param {string} txHash - confirmed on-chain tx hash
+   * Record a completed purchase.
+   * For blockchain agents: txHash is required (wallet tx done client-side).
+   * For DB agents: no txHash needed.
    */
   purchaseAccess: (agentId, isLifetime, txHash) =>
     api.post(`/agents/${agentId}/purchase`, {
       isLifetime,
-      txHash,
+      txHash: txHash || undefined,
     }),
 
   // ─────────────────────────────────────────────
-  // UPVOTE (PAID — 100% to creator)
+  // UPVOTE (paid on blockchain, free on DB)
   // ─────────────────────────────────────────────
 
   /**
-   * Record upvote after on-chain tx.
-   * @param {string} agentId
-   * @param {string} txHash
+   * Upvote an agent.
+   * For blockchain agents: txHash is required (AGT transfer done client-side).
+   * For DB agents: no txHash needed (free, deduplicated by wallet).
    */
   upvote: (agentId, txHash) =>
-    api.post(`/agents/${agentId}/upvote`, { txHash }),
+    api.post(`/agents/${agentId}/upvote`, { txHash: txHash || undefined }),
 
   // ─────────────────────────────────────────────
-  // EXECUTION (NO TOKEN PAYMENT)
+  // EXECUTION
   // ─────────────────────────────────────────────
 
   execute: (id, task) =>
     api.post(`/agents/${id}/execute`, { task }),
+
+  // ─────────────────────────────────────────────
+  // REVIEWS
+  // ─────────────────────────────────────────────
+
+  getReviews: (agentId, page = 1) =>
+    api.get(`/agents/${agentId}/reviews`, { params: { page } }),
+
+  createReview: (agentId, data) =>
+    api.post(`/agents/${agentId}/reviews`, data),
+
+  likeReview: (reviewId) =>
+    api.post(`/reviews/${reviewId}/like`),
+
+  deleteReview: (reviewId) =>
+    api.delete(`/reviews/${reviewId}`),
 
   // ─────────────────────────────────────────────
   // MANAGEMENT
