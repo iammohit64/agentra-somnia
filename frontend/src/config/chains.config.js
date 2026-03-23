@@ -1,9 +1,10 @@
 import { baseSepolia, arbitrumSepolia } from 'wagmi/chains'
-import { monadTestnet } from './custom-chains'
+import { monadTestnet, polkadotTestnet } from './custom-chains'
 import deployments from '../deployments.json'
 
 // 1. Export the array for Wagmi to initialize
-export const SUPPORTED_CHAINS = [baseSepolia, arbitrumSepolia, monadTestnet]
+// (Added polkadotTestnet here!)
+export const SUPPORTED_CHAINS = [baseSepolia, arbitrumSepolia, monadTestnet, polkadotTestnet]
 
 // 2. Export the dynamic lookup map for your React components
 export const CHAIN_CONFIG = SUPPORTED_CHAINS.reduce((acc, chain) => {
