@@ -92,13 +92,13 @@ export default function Marketplace() {
       <div className="relative z-10 p-5 lg:p-8 max-w-7xl mx-auto">
         {/* Header */}
         <motion.div initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="mb-8">
-          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.1, duration: 0.4 }}
+          {/* <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.1, duration: 0.4 }}
             className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-[rgba(124,58,237,0.25)] bg-[rgba(124,58,237,0.06)] mb-4">
             <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] pulse-dot" />
             <span className="text-[10px] font-mono text-[var(--color-purple-pale)] tracking-[0.2em]">
               NETWORK LIVE — {stats?.activeAgents ?? 0} AGENTS ONLINE
             </span>
-          </motion.div>
+          </motion.div> */}
           <h1 className="font-display font-extrabold text-4xl sm:text-5xl lg:text-6xl text-[var(--color-text-primary)] leading-[1.1] tracking-tight">
             <span className="gradient-text-purple">AGENT</span> MARKETPLACE
           </h1>
@@ -116,9 +116,9 @@ export default function Marketplace() {
               <motion.div key={stat.label} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 + i * 0.05 }}
                 onMouseEnter={() => setHoveredStat(stat.label)} onMouseLeave={() => setHoveredStat(null)} className="group">
                 <div className={`glass-card-landing rounded-xl p-4 sm:p-5 text-center relative overflow-hidden transition-all duration-300 ${hoveredStat === stat.label ? 'scale-[1.02]' : ''}`}>
-                  <div className={`absolute inset-0 bg-gradient-to-br ${stat.gradient} opacity-0 group-hover:opacity-100 transition-opacity duration-300`} />
+                  <div className={`absolute inset-0 bg-gradient-to-br ${stat.gradient} opacity-0`} />
                   <div className="relative z-10">
-                    <Icon size={18} className={`mx-auto mb-2 ${colorMap[stat.color]} opacity-60 group-hover:opacity-100 transition-opacity`} />
+                    <Icon size={18} className={`mx-auto mb-2 ${colorMap[stat.color]} opacity-60`} />
                     <div className={`font-mono font-bold text-2xl sm:text-3xl ${colorMap[stat.color]}`}>{stat.value}</div>
                     <div className="text-[var(--color-text-dim)] text-[9px] font-mono tracking-[0.2em] mt-1 uppercase">{stat.label}</div>
                   </div>
@@ -156,7 +156,7 @@ export default function Marketplace() {
                     onClick={() => setFilter('category', cat)}
                     className={`px-3 sm:px-4 py-2 rounded-lg font-mono text-[10px] tracking-[0.12em] border transition-all cursor-pointer ${
                       (filters?.category || 'all') === cat
-                        ? 'bg-[rgba(124,58,237,0.15)] border-[var(--color-purple-core)] text-[var(--color-purple-bright)] shadow-[0_0_12px_rgba(124,58,237,0.2)]'
+                        ? ' border-[var(--color-purple-core)] text-[var(--color-purple-bright)] shadow-[0_0_12px_rgba(124,58,237,0.2)]'
                         : 'bg-transparent border-[var(--color-border)] text-[var(--color-text-dim)] hover:border-[var(--color-border-bright)] hover:text-[var(--color-text-secondary)]'
                     }`}>
                     {cat.toUpperCase()}

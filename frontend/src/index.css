@@ -238,7 +238,6 @@
 
   /* Nav links — dark neutral, purple ONLY when active */
   .nav-link-active {
-    background: rgba(124,58,237,0.10);
     border: 1px solid rgba(124,58,237,0.28);
     color: #8b5cf6;
   }

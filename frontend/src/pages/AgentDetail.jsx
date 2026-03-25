@@ -389,8 +389,6 @@ function PurchasePanelUI({ purchaseType, setPurchaseType, monthlyEth, lifetimeEt
 
 // ─────────────────────────────────────────────────────────────
 // UPVOTE BUTTON
-// Receives stable primitive props (agentId, ownerWallet, upvotes)
-// NOT the whole agent object — avoids re-render loops
 // ─────────────────────────────────────────────────────────────
 
 function UpvoteButton({ agentId, contractAgentId, ownerWallet, initialUpvotes, walletAddress, isConnected }) {
@@ -404,13 +402,10 @@ function UpvoteButton({ agentId, contractAgentId, ownerWallet, initialUpvotes, w
   const [error, setError] = useState('')
   const [statusLoading, setStatusLoading] = useState(false)
 
-  // Derived — stable comparison using primitive strings
   const isOwner = !!(walletAddress && ownerWallet && walletAddress.toLowerCase() === ownerWallet.toLowerCase())
   const isBlockchainAgent = contractAgentId !== null && contractAgentId !== undefined
   const contracts = chain?.id ? CHAIN_CONFIG[chain.id]?.contracts : null
 
-  // ── Check upvote status once per (agentId + walletAddress) pair ──
-  // Both are primitives so this effect is stable and won't loop
   useEffect(() => {
     if (!walletAddress || !agentId) {
       setHasUpvoted(false)
@@ -423,7 +418,7 @@ function UpvoteButton({ agentId, contractAgentId, ownerWallet, initialUpvotes, w
       .catch(() => { if (!cancelled) setHasUpvoted(false) })
       .finally(() => { if (!cancelled) setStatusLoading(false) })
     return () => { cancelled = true }
-  }, [agentId, walletAddress]) // ← only primitives, no object references
+  }, [agentId, walletAddress])
 
   const handleUpvote = async () => {
     if (!isConnected || isOwner || hasUpvoted || isUpvoting) return
@@ -508,17 +503,13 @@ export default function AgentDetail() {
   const [hasValidAccess, setHasValidAccess] = useState(false)
   const [accessLoading, setAccessLoading] = useState(false)
 
-  // Tracks which wallet address the current access grant belongs to.
-  // Stored as a ref so changing it doesn't trigger re-renders.
   const accessGrantedForWallet = useRef(null)
 
-  // Derived booleans — computed from primitives, stable
   const ownerWallet = agent?.ownerWallet?.toLowerCase()
   const currentWallet = address?.toLowerCase()
   const isOwner = !!(currentWallet && ownerWallet && currentWallet === ownerWallet)
   const isBlockchainAgent = agent?.contractAgentId !== null && agent?.contractAgentId !== undefined
 
-  // Access is valid only if the check result is true AND it was for this exact wallet
   const userHasAccess = (hasValidAccess && accessGrantedForWallet.current === currentWallet) || isOwner
 
   const showToast = (msg, type = 'error') => {
@@ -534,11 +525,7 @@ export default function AgentDetail() {
     finally { setLoading(false) }
   }
 
-  // ── Stable access checker using useCallback ───────────────
-  // Wrapped in useCallback so it doesn't change reference on every render,
-  // which would cause the useEffect below to fire in a loop.
   const checkAccess = useCallback(async (agentData, walletAddr) => {
-    // Always revoke first — synchronously, before any async work
     setHasValidAccess(false)
     accessGrantedForWallet.current = null
 
@@ -546,7 +533,6 @@ export default function AgentDetail() {
 
     const normalized = walletAddr.toLowerCase()
 
-    // Owner gets access immediately without an API call
     if (agentData.ownerWallet?.toLowerCase() === normalized) {
       setHasValidAccess(true)
       accessGrantedForWallet.current = normalized
@@ -557,9 +543,6 @@ export default function AgentDetail() {
     try {
       const res = await agentsAPI.checkAccess(agentData.agentId)
       const granted = res.data?.hasAccess || false
-
-      // Guard against stale results: only apply if wallet hasn't changed
-      // while we were awaiting the response
       const stillSameWallet = address?.toLowerCase() === normalized
       if (stillSameWallet) {
         setHasValidAccess(granted)
@@ -571,9 +554,8 @@ export default function AgentDetail() {
     } finally {
       setAccessLoading(false)
     }
-  }, [address]) // address is included so the stale-wallet guard uses the latest value
+  }, [address])
 
-  // ── On agent page load ────────────────────────────────────
   useEffect(() => {
     clearLogs()
     setResult(null)
@@ -585,16 +567,11 @@ export default function AgentDetail() {
     fetchAgentDetails()
   }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── When agent loads, run the access check ────────────────
   useEffect(() => {
     if (agent) checkAccess(agent, address || null)
   }, [agent]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── When wallet changes, immediately revoke then re-check ─
-  // This is separate from the agent effect so switching accounts
-  // always revokes access right away, not after agent re-fetches.
   useEffect(() => {
-    // Synchronous revoke — happens before React paints
     setHasValidAccess(false)
     accessGrantedForWallet.current = null
 
@@ -602,7 +579,6 @@ export default function AgentDetail() {
       if (address) {
         checkAccess(agent, address)
       }
-      // If address is undefined (disconnected), stay revoked
     }
   }, [address]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -636,7 +612,7 @@ export default function AgentDetail() {
 
   const monthlyEth = agent?.pricing ? parseFloat(formatUnits(BigInt(agent.pricing), 18)).toFixed(4) : '0'
 
-  if (loading) return <div className="p-6 max-w-6xl mx-auto"><LoadingPulse rows={8} /></div>
+  if (loading) return <div className="p-6 max-w-7xl mx-auto"><LoadingPulse rows={8} /></div>
   if (!agent) return (
     <div className="relative min-h-[60vh] flex items-center justify-center p-6">
       <div className="glass-card-landing rounded-2xl p-10 text-center">
@@ -660,7 +636,7 @@ export default function AgentDetail() {
       <div className="fixed top-20 right-10 w-[500px] h-[400px] rounded-full pointer-events-none opacity-25"
         style={{ background: 'radial-gradient(ellipse, rgba(124,58,237,0.08) 0%, transparent 70%)' }} />
 
-      <div className="relative z-10 p-5 lg:p-8 max-w-6xl mx-auto">
+      <div className="relative z-10 p-5 lg:p-8 max-w-7xl mx-auto">
         <Link to="/marketplace">
           <motion.div whileHover={{ x: -4 }} className="inline-flex items-center gap-2 text-[var(--color-text-dim)] hover:text-[var(--color-purple-bright)] text-[11px] font-mono tracking-widest mb-6 transition-colors cursor-pointer group">
             <ArrowLeft size={14} className="group-hover:-translate-x-1 transition-transform" />
@@ -670,8 +646,8 @@ export default function AgentDetail() {
 
         {/* Hero */}
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
-          <div className="glass-card-landing rounded-2xl p-6 sm:p-8 relative overflow-hidden shadow-[0_20px_60px_-15px_rgba(124,58,237,0.2)]">
-            <div className="absolute top-0 right-0 w-[300px] h-[200px] rounded-full pointer-events-none" style={{ background: 'radial-gradient(ellipse, rgba(124,58,237,0.08) 0%, transparent 70%)' }} />
+          <div className="glass-card-landing rounded-2xl p-6 sm:p-8 relative overflow-hidden ">
+            <div className="absolute top-0 right-0 w-[300px] h-[200px] rounded-full pointer-events-none" />
             <div className="relative z-10 flex flex-col lg:flex-row items-start gap-6">
               <motion.div whileHover={{ scale: 1.05 }} className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-br from-[rgba(124,58,237,0.2)] to-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.3)] flex items-center justify-center shrink-0">
                 <Cpu size={32} className="text-[var(--color-purple-bright)]" />
@@ -740,119 +716,148 @@ export default function AgentDetail() {
           })}
         </div>
 
-        {/* Execute Tab */}
+        {/* ─── EXECUTE TAB ──────────────────────────────────────── */}
         {activeTab === 'execute' && (
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 lg:gap-6">
-            <div className="lg:col-span-3 space-y-5">
-              <FadeInSection>
-                <div className="glass-card-landing rounded-xl p-5 sm:p-6 min-h-[300px]">
-                  <AnimatePresence mode="wait">
-                    {accessLoading ? (
-                      <motion.div key="loading" className="flex items-center justify-center py-12">
-                        <Loader2 size={24} className="animate-spin text-[var(--color-purple-bright)]" />
-                      </motion.div>
-                    ) : userHasAccess ? (
-                      <motion.div key="execute" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
-                        <h2 className="font-display font-bold text-base sm:text-lg text-[var(--color-text-primary)] mb-5 flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-[rgba(124,58,237,0.1)] border border-[rgba(124,58,237,0.2)] flex items-center justify-center">
-                            <Terminal size={16} className="text-[var(--color-purple-bright)]" />
-                          </div>
-                          EXECUTION CONSOLE
-                        </h2>
-                        <div className="mb-5">
-                          <label className="text-[9px] font-mono text-[var(--color-text-dim)] tracking-[0.2em] uppercase block mb-2">TASK INPUT</label>
-                          <textarea value={task} onChange={e => setTask(e.target.value)} placeholder="Describe the task for this agent..." rows={4} className="input-field w-full px-4 py-3 rounded-xl text-sm resize-none" />
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                          <div className="text-[10px] font-mono text-[var(--color-text-dim)]">
-                            STATUS: <span className="text-[var(--color-success)] font-bold text-sm">UNLOCKED</span>
-                            {isOwner && <span className="ml-2 text-[var(--color-purple-bright)]">(OWNER)</span>}
-                          </div>
-                          <NeonButton icon={Send} onClick={handleExecute} loading={isExecuting} disabled={!isConnected || !task.trim()}>
-                            {isConnected ? 'EXECUTE' : 'CONNECT WALLET'}
-                          </NeonButton>
-                        </div>
-                      </motion.div>
-                    ) : (
-                      <motion.div key="paywall" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
-                        {isBlockchainAgent
-                          ? <BlockchainPurchasePanel agent={agent} onSuccess={handlePurchaseSuccess} />
-                          : <DbPurchasePanel agent={agent} onSuccess={handlePurchaseSuccess} />
-                        }
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </FadeInSection>
+          <div className="space-y-5">
 
-              {userHasAccess && executionResult && (
-                <FadeInSection delay={0.1}>
-                  <div className="space-y-4">
-                    <OutputRenderer response={executionResult.output} latency={executionResult.latency} success={executionResult.success} agentName={agent.name} />
-                    <ReadableOutput response={executionResult.output} success={executionResult.success} />
+            {/* TOP SECTION — 2-column grid (always visible) */}
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 lg:gap-6">
+
+              {/* LEFT: Execution Console + Execution Logs stacked */}
+              <div className="lg:col-span-3 space-y-5">
+
+                {/* Execution Console */}
+                <FadeInSection>
+                  <div className="glass-card-landing rounded-xl p-5 sm:p-6 min-h-[300px]">
+                    <AnimatePresence mode="wait">
+                      {accessLoading ? (
+                        <motion.div key="loading" className="flex items-center justify-center py-12">
+                          <Loader2 size={24} className="animate-spin text-[var(--color-purple-bright)]" />
+                        </motion.div>
+                      ) : userHasAccess ? (
+                        <motion.div key="execute" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
+                          <h2 className="font-display font-bold text-base sm:text-lg text-[var(--color-text-primary)] mb-5 flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-lg bg-[rgba(124,58,237,0.1)] border border-[rgba(124,58,237,0.2)] flex items-center justify-center">
+                              <Terminal size={16} className="text-[var(--color-purple-bright)]" />
+                            </div>
+                            EXECUTION CONSOLE
+                          </h2>
+                          <div className="mb-5">
+                            <label className="text-[9px] font-mono text-[var(--color-text-dim)] tracking-[0.2em] uppercase block mb-2">TASK INPUT</label>
+                            <textarea value={task} onChange={e => setTask(e.target.value)} placeholder="Describe the task for this agent..." rows={4} className="input-field w-full px-4 py-3 rounded-xl text-sm resize-none" />
+                          </div>
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="text-[10px] font-mono text-[var(--color-text-dim)]">
+                              STATUS: <span className="text-[var(--color-success)] font-bold text-sm">UNLOCKED</span>
+                              {isOwner && <span className="ml-2 text-[var(--color-purple-bright)]">(OWNER)</span>}
+                            </div>
+                            <NeonButton icon={Send} onClick={handleExecute} loading={isExecuting} disabled={!isConnected || !task.trim()}>
+                              {isConnected ? 'EXECUTE' : 'CONNECT WALLET'}
+                            </NeonButton>
+                          </div>
+                        </motion.div>
+                      ) : (
+                        <motion.div key="paywall" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
+                          {isBlockchainAgent
+                            ? <BlockchainPurchasePanel agent={agent} onSuccess={handlePurchaseSuccess} />
+                            : <DbPurchasePanel agent={agent} onSuccess={handlePurchaseSuccess} />
+                          }
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 </FadeInSection>
+
+                {/* Execution Logs */}
+                <FadeInSection delay={0.1}>
+                  <TerminalBox logs={logs} title={userHasAccess ? 'EXECUTION LOG' : 'SYSTEM LOGS'} />
+                </FadeInSection>
+
+              </div>
+
+              {/* RIGHT: Capabilities + Upvote + Performance stacked */}
+              <div className="lg:col-span-2 space-y-5">
+
+                <FadeInSection delay={0.1}>
+                  <div className="glass-card-landing rounded-xl p-5 sm:p-6">
+                    <h3 className="font-mono text-[10px] tracking-[0.2em] text-[var(--color-text-dim)] uppercase mb-4 flex items-center gap-2">
+                      <Sparkles size={12} className="text-[var(--color-purple-bright)]" /> CAPABILITIES
+                    </h3>
+                    <div className="space-y-2.5">
+                      {['Natural Language Processing', 'Real-time Analysis', 'Multi-format Input', 'Streaming Output', 'Context Window 128K', 'Agent Composition'].map((cap, i) => (
+                        <motion.div key={cap} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3 + i * 0.05 }} className="flex items-center gap-2.5 text-xs text-[var(--color-text-muted)]">
+                          <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-purple-bright)] shrink-0" />
+                          {cap}
+                        </motion.div>
+                      ))}
+                    </div>
+                  </div>
+                </FadeInSection>
+
+                <FadeInSection delay={0.15}>
+                  <UpvoteButton
+                    agentId={agent.agentId}
+                    contractAgentId={agent.contractAgentId}
+                    ownerWallet={agent.ownerWallet}
+                    initialUpvotes={agent.upvotes}
+                    walletAddress={address}
+                    isConnected={isConnected}
+                  />
+                </FadeInSection>
+
+                <FadeInSection delay={0.2}>
+                  <div className="glass-card-landing rounded-xl p-5 sm:p-6">
+                    <h3 className="font-mono text-[10px] tracking-[0.2em] text-[var(--color-text-dim)] uppercase mb-5 flex items-center gap-2">
+                      <Gauge size={12} className="text-[var(--color-star-blue)]" /> PERFORMANCE
+                    </h3>
+                    <div className="space-y-4">
+                      {[
+                        { label: 'Avg Latency', value: `${agent.metrics?.avgLatency || 234}ms`, bar: 80, color: 'from-blue-500 to-blue-400' },
+                        { label: 'Uptime', value: '99.9%', bar: 99, color: 'from-emerald-500 to-emerald-400' },
+                        { label: 'Success Rate', value: `${agent.successRate || 0}%`, bar: agent.successRate || 0, color: 'from-purple-500 to-purple-400' },
+                      ].map((stat, i) => (
+                        <div key={stat.label}>
+                          <div className="flex justify-between text-[10px] font-mono mb-1.5">
+                            <span className="text-[var(--color-text-dim)]">{stat.label}</span>
+                            <span className="text-[var(--color-text-muted)] font-bold">{stat.value}</span>
+                          </div>
+                          <div className="h-1.5 bg-[var(--color-nebula-deep)] rounded-full overflow-hidden">
+                            <motion.div initial={{ width: 0 }} animate={{ width: `${stat.bar}%` }} transition={{ delay: 0.6 + i * 0.1, duration: 0.8 }} className={`h-full rounded-full bg-gradient-to-r ${stat.color}`} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </FadeInSection>
+
+              </div>
+            </div>
+
+            {/* BOTTOM SECTION — full-width results (only after execution) */}
+            <AnimatePresence>
+              {userHasAccess && executionResult && (
+                <motion.div
+                  key="execution-results"
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 8 }}
+                  transition={{ duration: 0.4, ease: 'easeOut' }}
+                  className="space-y-5"
+                >
+                  {/* Readable Output — full width */}
+                  <ReadableOutput response={executionResult.output} success={executionResult.success} />
+
+                  {/* Execution complete JSON — full width */}
+                  <OutputRenderer
+                    response={executionResult.output}
+                    latency={executionResult.latency}
+                    success={executionResult.success}
+                    agentName={agent.name}
+                  />
+                </motion.div>
               )}
+            </AnimatePresence>
 
-              <FadeInSection delay={0.15}>
-                <TerminalBox logs={logs} title={userHasAccess ? 'EXECUTION LOG' : 'SYSTEM LOGS'} />
-              </FadeInSection>
-            </div>
-
-            <div className="lg:col-span-2 space-y-5">
-              <FadeInSection delay={0.1}>
-                <div className="glass-card-landing rounded-xl p-5 sm:p-6">
-                  <h3 className="font-mono text-[10px] tracking-[0.2em] text-[var(--color-text-dim)] uppercase mb-4 flex items-center gap-2">
-                    <Sparkles size={12} className="text-[var(--color-purple-bright)]" /> CAPABILITIES
-                  </h3>
-                  <div className="space-y-2.5">
-                    {['Natural Language Processing', 'Real-time Analysis', 'Multi-format Input', 'Streaming Output', 'Context Window 128K', 'Agent Composition'].map((cap, i) => (
-                      <motion.div key={cap} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3 + i * 0.05 }} className="flex items-center gap-2.5 text-xs text-[var(--color-text-muted)]">
-                        <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-purple-bright)] shrink-0" />
-                        {cap}
-                      </motion.div>
-                    ))}
-                  </div>
-                </div>
-              </FadeInSection>
-
-              {/* UpvoteButton receives only stable primitives — no object reference */}
-              <FadeInSection delay={0.15}>
-                <UpvoteButton
-                  agentId={agent.agentId}
-                  contractAgentId={agent.contractAgentId}
-                  ownerWallet={agent.ownerWallet}
-                  initialUpvotes={agent.upvotes}
-                  walletAddress={address}
-                  isConnected={isConnected}
-                />
-              </FadeInSection>
-
-              <FadeInSection delay={0.2}>
-                <div className="glass-card-landing rounded-xl p-5 sm:p-6">
-                  <h3 className="font-mono text-[10px] tracking-[0.2em] text-[var(--color-text-dim)] uppercase mb-5 flex items-center gap-2">
-                    <Gauge size={12} className="text-[var(--color-star-blue)]" /> PERFORMANCE
-                  </h3>
-                  <div className="space-y-4">
-                    {[
-                      { label: 'Avg Latency', value: `${agent.metrics?.avgLatency || 234}ms`, bar: 80, color: 'from-blue-500 to-blue-400' },
-                      { label: 'Uptime', value: '99.9%', bar: 99, color: 'from-emerald-500 to-emerald-400' },
-                      { label: 'Success Rate', value: `${agent.successRate || 0}%`, bar: agent.successRate || 0, color: 'from-purple-500 to-purple-400' },
-                    ].map((stat, i) => (
-                      <div key={stat.label}>
-                        <div className="flex justify-between text-[10px] font-mono mb-1.5">
-                          <span className="text-[var(--color-text-dim)]">{stat.label}</span>
-                          <span className="text-[var(--color-text-muted)] font-bold">{stat.value}</span>
-                        </div>
-                        <div className="h-1.5 bg-[var(--color-nebula-deep)] rounded-full overflow-hidden">
-                          <motion.div initial={{ width: 0 }} animate={{ width: `${stat.bar}%` }} transition={{ delay: 0.6 + i * 0.1, duration: 0.8 }} className={`h-full rounded-full bg-gradient-to-r ${stat.color}`} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </FadeInSection>
-            </div>
           </div>
         )}
 

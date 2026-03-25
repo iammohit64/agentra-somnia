@@ -118,7 +118,7 @@ const STATS = [
           style={{ background: 'radial-gradient(ellipse, rgba(147,51,234,0.04) 0%, transparent 70%)' }} />
 
         {/* Dynamic Badge */}
-        <motion.div
+        {/* <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.1 }}
@@ -128,7 +128,7 @@ const STATS = [
           <span className="text-[11px] font-mono text-[var(--color-purple-pale)] tracking-[0.2em]">
             NETWORK LIVE — {stats?.activeAgents || 0} AGENTS ONLINE
           </span>
-        </motion.div>
+        </motion.div> */}
 
         {/* Heading */}
         <motion.h1

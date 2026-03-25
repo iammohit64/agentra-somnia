@@ -72,10 +72,10 @@ export default function TopBar() {
           </span>
         </Link>
 
-        <div className="hidden sm:flex items-center gap-2 text-[var(--color-success)] text-[10px] font-mono tracking-widest">
+        {/* <div className="hidden sm:flex items-center gap-2 text-[var(--color-success)] text-[10px] font-mono tracking-widest">
           <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] pulse-dot" />
           NETWORK ONLINE
-        </div>
+        </div> */}
 
         <div className="hidden md:flex items-center gap-1.5 text-[var(--color-text-dim)] text-[10px] font-mono tracking-widest uppercase">
           <Radio size={11} />

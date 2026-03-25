@@ -26,32 +26,49 @@ export default function Sidebar() {
         transition={{ type: 'spring', stiffness: 320, damping: 32 }}
         className="hidden lg:flex flex-col h-screen bg-[var(--color-panel)] border-r border-[var(--color-border)] relative z-20 overflow-hidden shrink-0"
       >
-        {/* Logo */}
-        <NavLink to="/" className="block">
-          <div className="flex items-center gap-3 p-4 border-b border-[var(--color-border)] cursor-pointer hover:bg-[var(--color-nebula-deep)] transition-colors">
-            <div className="w-8 h-8 rounded-lg bg-[var(--color-nebula)] border border-[var(--color-border-bright)] flex items-center justify-center shrink-0">
-              <Cpu size={15} className="text-[var(--color-purple-bright)]" />
-            </div>
-
-            <AnimatePresence>
-              {!collapsed && (
-                <motion.div
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -8 }}
-                  transition={{ duration: 0.18 }}
-                >
-                  <div className="font-display font-bold text-sm text-[var(--color-text-primary)] tracking-[0.15em]">
-                    AGENTRA
-                  </div>
-                  <div className="font-mono text-[9px] text-[color-purple-bright)] tracking-[0.4em]">
-                    NEURAL MARKET
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+        <div className={clsx(
+          "flex items-center justify-between border-b border-[var(--color-border)]",
+          collapsed ? "pl-4 pr-3 py-4" : "p-4"
+        )}>
+  
+        {/* Left: Logo + Title */}
+        <NavLink to="/" className="flex items-center gap-3 cursor-pointer">
+          <div className="w-8 h-8 rounded-lg bg-[var(--color-nebula)] border border-[var(--color-border-bright)] flex items-center justify-center shrink-0">
+            <Cpu size={15} className="text-[var(--color-purple-bright)]" />
           </div>
+
+          <AnimatePresence>
+            {!collapsed && (
+              <motion.div
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -8 }}
+                transition={{ duration: 0.18 }}
+              >
+                <div className="font-display font-bold text-sm text-[var(--color-text-primary)] tracking-[0.15em]">
+                  AGENTRA
+                </div>
+                <div className="font-mono text-[9px] text-[var(--color-purple-bright)] tracking-[0.25em] whitespace-nowrap">
+                  NEURAL MARKET
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </NavLink>
+
+        {/* Right: Collapse Button */}
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className={clsx(
+            "p-2 rounded-lg text-[var(--color-text-dim)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-nebula-deep)] transition-all",
+            collapsed && "mr-1"
+          )}
+        >
+          <motion.div animate={{ rotate: collapsed ? 0 : 180 }}>
+            <ChevronRight size={16} />
+          </motion.div>
+        </button>
+      </div>
 
         {/* Nav items */}
         <nav className="flex-1 p-2.5 space-y-1">
