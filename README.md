@@ -15,7 +15,7 @@
 
 <br/>
 
-[🚀 Live Demo](https://agentra-somnia.vercel.app/) &nbsp;·&nbsp; [🎬 Watch Demo](https://canva.link/uxmz5s79nca4jxi) &nbsp;·&nbsp; [📦 GitHub Repo](https://github.com/iammohit64/agentra-somnia.git) &nbsp;·&nbsp; [🔗 Marketplace Contract](https://shannon.explorer.somnia.network/address/0x37bF6Fa744faf5E1d5eb563559818373901d4499) &nbsp;·&nbsp; [🪙 AGT Token](https://shannon.explorer.somnia.network/address/0x04c293572ADea2d3D52A623C4B49D4C6fEdA569d) &nbsp;·&nbsp; [⚡ Reactor Contract](https://shannon.explorer.somnia.network/address/0x24e656c6bb05F36F255Eb72CD86562E6b4704D94)
+[🚀 Live Demo](https://agentra-somnia.vercel.app/) &nbsp;·&nbsp; [🎬 Watch Demo](https://canva.link/l81k8kuq5uwrqgf) &nbsp;·&nbsp; [📦 GitHub Repo](https://github.com/iammohit64/agentra-somnia.git) &nbsp;·&nbsp; [🔗 Marketplace Contract](https://shannon.explorer.somnia.network/address/0x37bF6Fa744faf5E1d5eb563559818373901d4499) &nbsp;·&nbsp; [🪙 AGT Token](https://shannon.explorer.somnia.network/address/0x04c293572ADea2d3D52A623C4B49D4C6fEdA569d) &nbsp;·&nbsp; [⚡ Reactor Contract](https://shannon.explorer.somnia.network/address/0x24e656c6bb05F36F255Eb72CD86562E6b4704D94)
 
 </div>
 ---
