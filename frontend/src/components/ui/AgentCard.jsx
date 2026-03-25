@@ -1,7 +1,7 @@
 import React from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { Zap, Star, TrendingUp, Activity, Tag, Shield } from 'lucide-react'
+import { Zap, Star, TrendingUp, Activity, Tag, Shield, Award } from 'lucide-react'
 import { formatUnits } from 'viem'
 import clsx from 'clsx'
 
@@ -45,6 +45,11 @@ export default function AgentCard({ agent, index = 0 }) {
   const status = statusConfig[agent.status] || statusConfig.active
   const isOnChain = !!agent.contractAgentId
   const displayId = agent.agentId || agent.id || agent._id
+  
+  // Calculate Reactivity Progress (Max 50 upvotes for auto-upgrade)
+  const upvoteCount = agent.upvotes || 0;
+  const reactivityProgress = Math.min((upvoteCount / 50) * 100, 100);
+  const isUpgraded = agent.tier > 0; // If tier is 1 (Professional) or 2 (Enterprise)
 
   return (
     <motion.div
@@ -80,7 +85,7 @@ export default function AgentCard({ agent, index = 0 }) {
                   <h3 className="font-display font-bold text-[var(--color-text-primary)] text-sm tracking-wide leading-tight group-hover:text-[var(--color-purple-pale)] transition-colors duration-300">
                     {agent.name}
                   </h3>
-                  <div className="flex items-center gap-1.5 mt-0.5">
+                  <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
                     <span className={clsx(
                       'inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono border',
                       categoryColors[agent.category] || categoryColors.Other
@@ -90,6 +95,11 @@ export default function AgentCard({ agent, index = 0 }) {
                     {isOnChain && (
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[rgba(124,58,237,0.1)] border border-[rgba(124,58,237,0.2)] text-[9px] font-mono text-[var(--color-purple-bright)]">
                         <Shield size={8} /> ON-CHAIN
+                      </span>
+                    )}
+                    {isUpgraded && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[rgba(52,211,153,0.1)] border border-[rgba(52,211,153,0.2)] text-[9px] font-mono text-[var(--color-success)]">
+                        <Zap size={8} className="fill-[var(--color-success)]" /> PRO TIER
                       </span>
                     )}
                   </div>
@@ -105,6 +115,34 @@ export default function AgentCard({ agent, index = 0 }) {
             <p className="text-[var(--color-text-muted)] text-xs leading-relaxed mb-3 line-clamp-2 group-hover:text-[var(--color-text-secondary)] transition-colors duration-300">
               {agent.description || 'No description provided.'}
             </p>
+
+            {/* ⚡ Somnia Reactivity Auto-Upgrade Bar (Only show if not yet upgraded) */}
+            {!isUpgraded && (
+              <div className="mb-4">
+                <div className="flex justify-between items-center mb-1.5">
+                  <span className="text-[9px] font-mono text-[var(--color-purple-pale)] flex items-center gap-1 drop-shadow-[0_0_5px_rgba(168,85,247,0.5)]">
+                    <Zap size={8} /> SOMNIA AUTO-UPGRADE
+                  </span>
+                  <span className="text-[9px] font-mono text-[var(--color-text-muted)]">{upvoteCount}/50</span>
+                </div>
+                <div className="w-full bg-[rgba(124,58,237,0.1)] rounded-full h-1.5 border border-[rgba(124,58,237,0.2)] overflow-hidden">
+                  <div
+                    className="bg-gradient-to-r from-[var(--color-purple-bright)] to-[var(--color-accent-fuchsia)] h-full rounded-full shadow-[0_0_10px_rgba(168,85,247,0.8)] transition-all duration-500"
+                    style={{ width: `${reactivityProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* 🎖️ Loyalty VIP Badge (If user dashboard injects hasLifetimeAccess flag) */}
+            {agent.hasLifetimeAccess && (
+              <div className="mb-3 inline-flex items-center gap-1.5 px-2 py-1 rounded bg-[rgba(251,191,36,0.1)] border border-[rgba(251,191,36,0.3)]">
+                <Award size={10} className="text-[var(--color-warning)]" />
+                <span className="text-[9px] font-mono text-[var(--color-warning)] uppercase tracking-wider">
+                  On-Chain Loyalty VIP
+                </span>
+              </div>
+            )}
 
             {/* Tags — always visible */}
             {agent.tags?.length > 0 && (

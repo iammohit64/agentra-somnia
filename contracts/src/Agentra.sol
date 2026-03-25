@@ -12,6 +12,7 @@ contract Agentra is AccessControl, Pausable, ReentrancyGuard {
 
     IERC20 public immutable agtToken;
     address public feeCollector;
+    address public reactor; // The Somnia Reactive Contract
     
     uint256 public constant PLATFORM_FEE_PERCENTAGE = 20;
     uint256 public constant UPVOTE_COST = 1 ether;
@@ -36,7 +37,16 @@ contract Agentra is AccessControl, Pausable, ReentrancyGuard {
 
     event AgentDeployed(uint256 indexed agentId, address indexed creator, AgentTier tier);
     event AccessPurchased(uint256 indexed agentId, address indexed buyer, bool isLifetime);
-    event AgentUpvoted(uint256 indexed agentId, address indexed voter);
+    event AgentUpvoted(uint256 indexed agentId, address indexed voter, uint256 totalUpvotes);
+    
+    // New Reactivity Events
+    event AgentTierUpgraded(uint256 indexed agentId, AgentTier newTier);
+    event LoyaltyBadgeAwarded(address indexed buyer);
+
+    modifier onlyReactor() {
+        require(msg.sender == reactor, "Only Reactor can call this");
+        _;
+    }
 
     constructor(address _agtToken, address _feeCollector) {
         agtToken = IERC20(_agtToken);
@@ -50,11 +60,8 @@ contract Agentra is AccessControl, Pausable, ReentrancyGuard {
         listingFees[AgentTier.Enterprise] = 500 ether;
     }
 
-    // Notice the added `whenNotPaused` modifier
     function deployAgent(AgentTier _tier, uint256 _monthlyPrice, string memory _metadataURI) external nonReentrant whenNotPaused {
         uint256 fee = listingFees[_tier];
-        
-        // Notice the upgrade to safeTransferFrom
         agtToken.safeTransferFrom(msg.sender, feeCollector, fee);
 
         agentCounter++;
@@ -102,14 +109,32 @@ contract Agentra is AccessControl, Pausable, ReentrancyGuard {
         agtToken.safeTransferFrom(msg.sender, agent.creator, UPVOTE_COST);
         
         agent.upvotes++;
-        emit AgentUpvoted(_agentId, msg.sender);
+        // Notice we now pass totalUpvotes so the Reactor can read it from the log
+        emit AgentUpvoted(_agentId, msg.sender, agent.upvotes);
     }
 
-    function hasAccess(uint256 _agentId, address _user) external view returns (bool) {
-        return accessRegistry[_agentId][_user] > block.timestamp;
+    // --- Reactivity Engine Functions (Called by Somnia Network) ---
+
+    function autoUpgradeTier(uint256 _agentId) external onlyReactor {
+        Agent storage agent = agents[_agentId];
+        if(agent.tier == AgentTier.Standard) {
+            agent.tier = AgentTier.Professional;
+            emit AgentTierUpgraded(_agentId, AgentTier.Professional);
+        }
+    }
+
+    function mintLoyaltyReward(address _buyer) external onlyReactor {
+        // In a full production app, you might mint an NFT here. 
+        // For the hackathon, emitting this state change is sufficient to grant them UI perks.
+        emit LoyaltyBadgeAwarded(_buyer);
     }
 
     // --- Admin & Security Functions ---
+
+    function setReactor(address _reactor) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        reactor = _reactor;
+    }
+
     function setListingFees(AgentTier _tier, uint256 _newFee) external onlyRole(FEE_MANAGER_ROLE) {
         listingFees[_tier] = _newFee;
     }
@@ -124,5 +149,9 @@ contract Agentra is AccessControl, Pausable, ReentrancyGuard {
 
     function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
+    }
+
+    function hasAccess(uint256 _agentId, address _user) external view returns (bool) {
+        return accessRegistry[_agentId][_user] > block.timestamp;
     }
 }

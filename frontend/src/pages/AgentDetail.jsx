@@ -391,7 +391,7 @@ function PurchasePanelUI({ purchaseType, setPurchaseType, monthlyEth, lifetimeEt
 // UPVOTE BUTTON
 // ─────────────────────────────────────────────────────────────
 
-function UpvoteButton({ agentId, contractAgentId, ownerWallet, initialUpvotes, walletAddress, isConnected }) {
+function UpvoteButton({ agentId, contractAgentId, ownerWallet, initialUpvotes, walletAddress, isConnected, onUpvoteSuccess }) {
   const { chain } = useAccount()
   const publicClient = usePublicClient()
   const { writeContractAsync } = useWriteContract()
@@ -437,7 +437,9 @@ function UpvoteButton({ agentId, contractAgentId, ownerWallet, initialUpvotes, w
       }
       await agentsAPI.upvote(agentId, txHash)
       setHasUpvoted(true)
-      setUpvoteCount(prev => prev + 1)
+      const newCount = upvoteCount + 1
+      setUpvoteCount(newCount)
+      if (onUpvoteSuccess) onUpvoteSuccess(newCount)
     } catch (e) {
       setError(e?.shortMessage || e?.response?.data?.error || e.message || 'Upvote failed')
     } finally {
@@ -481,6 +483,18 @@ function UpvoteButton({ agentId, contractAgentId, ownerWallet, initialUpvotes, w
       </motion.button>
       {isOwner && <p className="text-[9px] font-mono text-[var(--color-text-dim)] text-center mt-2">You own this agent — cannot upvote</p>}
       {!isConnected && !isOwner && <p className="text-[9px] font-mono text-[var(--color-text-dim)] text-center mt-2">Connect wallet to upvote</p>}
+      
+      {isBlockchainAgent && (
+        <div className="mt-5 pt-4 border-t border-[rgba(255,255,255,0.05)]">
+          <div className="flex justify-between text-[10px] font-mono mb-1.5">
+            <span className="text-[var(--color-purple-bright)] flex items-center gap-1.5"><Zap size={10} /> SOMNIA AUTO-UPGRADE</span>
+            <span className="text-[var(--color-text-muted)] font-bold">{upvoteCount}/50</span>
+          </div>
+          <div className="h-1.5 bg-[var(--color-nebula-deep)] rounded-full overflow-hidden">
+            <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min((upvoteCount / 50) * 100, 100)}%` }} className="h-full rounded-full bg-gradient-to-r from-[var(--color-purple-pale)] to-[var(--color-purple-bright)] shadow-[0_0_10px_rgba(124,58,237,0.5)]" />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -656,22 +670,31 @@ export default function AgentDetail() {
                 <div className="flex flex-wrap items-center gap-3 mb-3">
                   <h1 className="font-display font-extrabold text-2xl sm:text-3xl lg:text-4xl text-[var(--color-text-primary)] tracking-tight">{agent.name}</h1>
                   <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[rgba(52,211,153,0.1)] border border-[rgba(52,211,153,0.25)]">
-                    <span className="w-2 h-2 rounded-full bg-[var(--color-success)] pulse-dot" />
-                    <span className="text-[10px] font-mono text-[var(--color-success)] tracking-widest font-bold">{(agent.status || 'ACTIVE').toUpperCase()}</span>
-                  </div>
-                  {isBlockchainAgent && <span className="px-2 py-1 rounded text-[9px] font-mono bg-[rgba(124,58,237,0.1)] border border-[rgba(124,58,237,0.3)] text-[var(--color-purple-bright)]">ON-CHAIN</span>}
-                </div>
-                <p className="text-[var(--color-text-secondary)] text-sm sm:text-base mb-4 leading-relaxed max-w-2xl">{agent.description}</p>
+                <span className="w-2 h-2 rounded-full bg-[var(--color-success)] pulse-dot" />
+                <span className="text-[10px] font-mono text-[var(--color-success)] tracking-widest font-bold">{(agent.status || 'ACTIVE').toUpperCase()}</span>
+              </div>
+              {isBlockchainAgent && <span className="px-2 py-1 rounded text-[9px] font-mono bg-[rgba(124,58,237,0.1)] border border-[rgba(124,58,237,0.3)] text-[var(--color-purple-bright)]">ON-CHAIN</span>}
+              <span className={`px-2 py-1 rounded text-[9px] font-mono border ${agent.tier >= 1 ? 'bg-[rgba(255,183,77,0.1)] border-[#ffb74d] text-[#ffb74d] shadow-[0_0_8px_rgba(255,183,77,0.3)]' : 'bg-[rgba(255,255,255,0.05)] border-[rgba(255,255,255,0.1)] text-[var(--color-text-dim)]'}`}>
+                {agent.tier >= 1 ? '⚡ PROFESSIONAL TIER' : 'STANDARD TIER'}
+              </span>
+            </div>
+            <p className="text-[var(--color-text-secondary)] text-sm sm:text-base mb-4 leading-relaxed max-w-2xl">{agent.description}</p>
                 <div className="flex flex-wrap gap-2 mb-5">
                   {(agent.tags || []).map(tag => <span key={tag} className="px-3 py-1 rounded-lg text-[10px] font-mono bg-[rgba(124,58,237,0.06)] border border-[rgba(124,58,237,0.15)] text-[var(--color-purple-pale)]">#{tag}</span>)}
                 </div>
                 <div className="flex flex-wrap items-center gap-4 text-[10px] font-mono text-[var(--color-text-dim)]">
-                  <span>OWNER: <span className="text-[var(--color-purple-bright)]">{agent.ownerWallet?.slice(0, 12) || '0xUNKNOWN'}...</span></span>
-                  <span>CATEGORY: <span className="text-[var(--color-text-muted)]">{agent.category || 'N/A'}</span></span>
-                  <span>MONTHLY: <span className="text-[var(--color-purple-bright)]">{monthlyEth} AGT</span></span>
-                </div>
-              </div>
+              <span>OWNER: <span className="text-[var(--color-purple-bright)]">{agent.ownerWallet?.slice(0, 12) || '0xUNKNOWN'}...</span></span>
+              <span>CATEGORY: <span className="text-[var(--color-text-muted)]">{agent.category || 'N/A'}</span></span>
+              <span>MONTHLY: <span className="text-[var(--color-purple-bright)]">{monthlyEth} AGT</span></span>
             </div>
+            {userHasAccess && isBlockchainAgent && (
+              <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[rgba(255,183,77,0.1)] border border-[rgba(255,183,77,0.3)] shadow-[0_0_12px_rgba(255,183,77,0.2)]">
+                <Star size={12} className="text-[#ffb74d]" />
+                <span className="text-[10px] font-mono text-[#ffb74d] tracking-widest font-bold">🎖️ ON-CHAIN LOYALTY VIP (AWARDED VIA SOMNIA REACTOR)</span>
+              </motion.div>
+            )}
+          </div>
+        </div>
             <div className="relative z-10 mt-6 flex items-center gap-3 p-3 rounded-xl bg-black/30 border border-[var(--color-border)] font-mono text-[11px]">
               <ExternalLink size={13} className="text-[var(--color-text-dim)] shrink-0" />
               <span className="text-[var(--color-text-muted)] flex-1 truncate">
@@ -795,15 +818,23 @@ export default function AgentDetail() {
                 </FadeInSection>
 
                 <FadeInSection delay={0.15}>
-                  <UpvoteButton
-                    agentId={agent.agentId}
-                    contractAgentId={agent.contractAgentId}
-                    ownerWallet={agent.ownerWallet}
-                    initialUpvotes={agent.upvotes}
-                    walletAddress={address}
-                    isConnected={isConnected}
-                  />
-                </FadeInSection>
+              <UpvoteButton
+                agentId={agent.agentId}
+                contractAgentId={agent.contractAgentId}
+                ownerWallet={agent.ownerWallet}
+                initialUpvotes={agent.upvotes}
+                walletAddress={address}
+                isConnected={isConnected}
+                onUpvoteSuccess={(newCount) => {
+                  if (newCount === 50) {
+                    setAgent(prev => ({ ...prev, tier: 1 }))
+                    showToast('⚡ SOMNIA REACTIVITY TRIGGERED: Agent instantly upgraded to Professional Tier on-chain!', 'success')
+                  } else {
+                    showToast('Upvote successful!', 'success')
+                  }
+                }}
+              />
+            </FadeInSection>
 
                 <FadeInSection delay={0.2}>
                   <div className="glass-card-landing rounded-xl p-5 sm:p-6">

@@ -449,6 +449,20 @@ export default function DeployStudio() {
                       Choose your tier (one-time listing fee to platform) and set your access prices. Users pay you 80%, platform takes 20%.
                     </p>
                   </div>
+                  {/* --- NEW SOMNIA REACTIVITY BANNER --- */}
+                  {isBlockchain && (
+                    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                      className="mt-4 flex items-start gap-3.5 p-4 rounded-xl bg-[rgba(124,58,237,0.08)] border border-[rgba(124,58,237,0.3)]">
+                      <Sparkles size={16} className="text-[var(--color-purple-bright)] shrink-0 mt-0.5" />
+                      <div>
+                        <div className="text-[var(--color-purple-bright)] text-[11px] font-mono font-bold tracking-widest mb-1">✨ POWERED BY SOMNIA REACTIVITY</div>
+                        <div className="text-[var(--color-text-muted)] text-xs leading-relaxed">
+                          Your agent will be deployed on a reactive smart contract. If the community gives your agent 50 upvotes, our on-chain Reactor will automatically upgrade your tier to Professional for free—no gas, no manual transactions.
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                  {/* ------------------------------------ */}
 
                   {/* Tier selection */}
                   <div>

@@ -15,7 +15,9 @@ const AGENTRA_ABI = [
 
   'event AgentDeployed(uint256 indexed agentId, address indexed creator, uint8 tier)',
   'event AccessPurchased(uint256 indexed agentId, address indexed buyer, bool isLifetime)',
-  'event AgentUpvoted(uint256 indexed agentId, address indexed voter)'
+  'event AgentUpvoted(uint256 indexed agentId, address indexed voter)',
+  'event AgentTierUpgraded(uint256 indexed agentId, uint8 newTier)',
+  'event LoyaltyBadgeAwarded(address indexed buyer)'
 ]
 
 const ERC20_ABI = [
@@ -289,6 +291,32 @@ class BlockchainService {
         }
       } catch (err) {
         console.error('[EVENT] Upvote error:', err.message)
+      }
+    })
+
+
+// Inside your startEventListeners() function, add these new listeners:
+
+    // Catch Somnia Reactivity Upgrades
+    this.agentra.on('AgentTierUpgraded', async (agentId, newTier, event) => {
+      try {
+        await prisma.agent.updateMany({
+          where: { contractAgentId: Number(agentId) },
+          data: { tier: Number(newTier) }, // Upgrades to Professional in DB automatically!
+        })
+        console.log(`[REACTIVITY] ⚡ Agent ${agentId} auto-upgraded to tier ${newTier} via Somnia On-Chain logic!`)
+      } catch (err) {
+        console.error('[EVENT] AgentTierUpgraded error:', err.message)
+      }
+    })
+
+    // Catch Somnia Loyalty Awards
+    this.agentra.on('LoyaltyBadgeAwarded', async (buyer, event) => {
+      try {
+        // Here you would update your User model to grant them a "Lifetime Founding Member" badge
+        console.log(`[REACTIVITY] ⚡ Loyalty badge instantly awarded to ${buyer} on-chain!`)
+      } catch (err) {
+        console.error('[EVENT] LoyaltyBadgeAwarded error:', err.message)
       }
     })
 
